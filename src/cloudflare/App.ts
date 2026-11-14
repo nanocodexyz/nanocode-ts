@@ -1159,6 +1159,8 @@ export function create<E extends Env>(options: create.Options<E>): create.Return
 
     private childEvents: unknown[] = []
 
+    private childSubagentRecord: Contracts.Subagent | undefined
+
     private childForwarding: Promise<void> | undefined
 
     private childOf():
@@ -1219,6 +1221,7 @@ export function create<E extends Env>(options: create.Options<E>): create.Return
     }
 
     private async childRun(
+      scope: string,
       descriptor: SessionDescriptor,
       parentSessionId: string,
       sessionId: string,
@@ -1230,11 +1233,15 @@ export function create<E extends Env>(options: create.Options<E>): create.Return
       if (!spec) return { status: 'failed', detail: `remote child ${sessionId} is not open` }
       const key = `${sessionId}
 ${requestId}`
+      const subagent = await this.opened(scope)
+        ?.resident?.children.subagent(sessionId)
+        .catch(() => null)
       let resolve: (turn: Contracts.ChildTurn) => void = () => undefined
       const done = new Promise<Contracts.ChildTurn>((settle) => (resolve = settle))
       this.childRuns.set(key, { done, resolve })
       const response = await this.childPost(descriptor, sessionId, 'child_turn', {
         spec,
+        ...(subagent ? { subagent } : {}),
         parent: headerJson({
           account_id: descriptor.account_id,
           session_id: '',
@@ -1377,6 +1384,7 @@ ${input.request_id}`
         }
       }
       if (action === 'child_turn') {
+        this.childSubagentRecord = input.subagent
         if (!this.childOf())
           this.metadata.insert(
             'child',
@@ -2160,7 +2168,16 @@ ${input.request_id}`
                         requestId: string,
                         prompt: string,
                         revision: number | null,
-                      ) => this.childRun(descriptor, sessionId, id, requestId, prompt, revision),
+                      ) =>
+                        this.childRun(
+                          scope,
+                          descriptor,
+                          sessionId,
+                          id,
+                          requestId,
+                          prompt,
+                          revision,
+                        ),
                       steer: async (
                         id: string,
                         requestId: string,
@@ -2208,6 +2225,9 @@ ${input.request_id}`
                       return body.output
                     },
                     childSubagent: async () => {
+                      const record = this.childSubagentRecord
+                      this.childSubagentRecord = undefined
+                      if (record) return record
                       const response = await this.parentPost('child_subagent', {
                         session_id: child.spec.session_id,
                       })
