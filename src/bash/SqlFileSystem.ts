@@ -21,6 +21,8 @@ const filesSchema = `CREATE TABLE IF NOT EXISTS ${filesTable} (scope TEXT NOT NU
 
 const parentIndex = `CREATE INDEX IF NOT EXISTS ${filesTable}_parent ON ${filesTable} (scope, parent)`
 
+const linksIndex = `CREATE INDEX IF NOT EXISTS ${filesTable}_links ON ${filesTable} (scope) WHERE kind = 'link'`
+
 const chunksSchema = `CREATE TABLE IF NOT EXISTS ${chunksTable} (scope TEXT NOT NULL, path TEXT NOT NULL, seq INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (scope, path, seq))`
 
 const sourcesSchema = `CREATE TABLE IF NOT EXISTS ${sourcesTable} (scope TEXT NOT NULL, path TEXT NOT NULL, source TEXT NOT NULL, size INTEGER NOT NULL, PRIMARY KEY (scope, path))`
@@ -142,7 +144,7 @@ export function create(sql: Contracts.SqlHost, options: create.Options = {}): Sq
       sql.transaction(
         'store',
         'files.schema',
-        [[filesSchema], [parentIndex], [chunksSchema], [sourcesSchema]],
+        [[filesSchema], [parentIndex], [linksIndex], [chunksSchema], [sourcesSchema]],
         'schema',
       ),
     ).then(() => undefined)
