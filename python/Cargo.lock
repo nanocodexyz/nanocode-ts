@@ -66,6 +66,9 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "nanocode-bytes"
 version = "0.7.0"
+dependencies = [
+ "nanocode-sys",
+]
 
 [[package]]
 name = "nanocode-compression"
@@ -130,6 +133,7 @@ dependencies = [
 name = "nanocode-python"
 version = "0.7.0"
 dependencies = [
+ "nanocode-bytes",
  "nanocode-compression",
  "nanocode-platform",
  "nanocode-python-capi",

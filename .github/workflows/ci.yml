@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+    branches-ignore: [master]
+  workflow_call:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - id: wasm
+        run: |
+          print=$(node scripts/wasm.mjs)
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/wasm-$print/nanocode-wasm-$print.tgz"
+          if curl -fsSIL -o /dev/null "$url"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::wasm-$print is not released yet: checking formatting and lint only"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.wasm.outputs.ready == 'true'
+        run: npm ci
+
+      - if: steps.wasm.outputs.ready != 'true'
+        run: npm ci --ignore-scripts
+
+      - run: npx vp check
+
+      - if: steps.wasm.outputs.ready == 'true'
+        run: npm run check:types
+
+      - if: steps.wasm.outputs.ready == 'true'
+        run: npm test

@@ -1393,6 +1393,10 @@ async function create(
       )?.rejected
     },
 
+    board(request: object): Promise<unknown> {
+      return internal.command('board', request)
+    },
+
     async catalog(frame: string, max_frame_bytes: number): Promise<string | null> {
       return (await self.identity(frame, max_frame_bytes)).name
     },

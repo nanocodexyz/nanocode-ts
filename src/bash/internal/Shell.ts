@@ -247,6 +247,7 @@ export class Output {
   #pipe: Pipe | undefined
   #spill: ((text: string) => Promise<void>) | undefined
   #pending: Promise<void> | undefined
+  #peer: Output | undefined
   #failure: unknown
   #piped = false
   #broken = false
@@ -268,6 +269,11 @@ export class Output {
     out.#spill = spill
     out.#piped = piped
     return out
+  }
+
+  static pair(stdout: Output, stderr: Output) {
+    stdout.#peer = stderr
+    stderr.#peer = stdout
   }
 
   get piped(): boolean {
@@ -298,6 +304,7 @@ export class Output {
       this.truncated = true
       if (!text) return
     }
+    if (this.#peer?.length) this.#peer.#flush(true)
     this.#chunks.push(flatten(text))
     this.length += text.length
     if (this.#spill && this.length >= SPILL) this.#flush(false)
@@ -315,7 +322,8 @@ export class Output {
     this.length = keep.length
     if (!text) return
     const spill = this.#spill!
-    const pending: Promise<void> = (this.#pending ?? Promise.resolve())
+    const before = this.#peer ? Promise.all([this.#pending, this.#peer.#pending]) : this.#pending
+    const pending: Promise<void> = (before ?? Promise.resolve())
       .then(() => spill(text))
       .catch((error) => {
         if (error instanceof PipeError) this.#broken = true

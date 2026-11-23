@@ -8,7 +8,7 @@ type Line = { indent: number; text: string; number: number; raw: string }
 class YamlError extends Error {}
 
 const KEY =
-  /^(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s#'"{\[\]},&*!|>%@`-][^#]*?|-[^\s#][^#]*?)\s*:(?:\s|$)/
+  /^(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s#'"{[\]},&*!|>%@`-][^#]*?|-[^\s#][^#]*?)\s*:(?:\s|$)/
 
 function stripComment(text: string): string {
   let quote = ''
@@ -19,7 +19,7 @@ function stripComment(text: string): string {
       else if (c === quote) quote = ''
       continue
     }
-    if ((c === '"' || c === "'") && (i === 0 || /[\s:\[{,-]/.test(text[i - 1]!))) quote = c
+    if ((c === '"' || c === "'") && (i === 0 || /[\s:[{,-]/.test(text[i - 1]!))) quote = c
     else if (c === '#' && (i === 0 || /\s/.test(text[i - 1]!)))
       return text.slice(0, i).replace(/\s+$/, '')
   }
@@ -187,7 +187,7 @@ class Parser {
     const line = this.peek()
     if (!line || line.indent < indent) return null
     if (/^-(\s|$)/.test(line.text)) return this.sequence(line.indent)
-    if (KEY.test(line.text) && !/^[\[{]/.test(line.text)) return this.mapping(line.indent)
+    if (KEY.test(line.text) && !/^[[{]/.test(line.text)) return this.mapping(line.indent)
     this.pos++
     return this.inline(line.text, line.indent)
   }
@@ -204,7 +204,7 @@ class Parser {
     if (value.startsWith('*')) result = this.anchors.get(value.slice(1).trim()) ?? null
     else if (/^[|>]/.test(value)) result = this.block(value, indent)
     else if (value === '') result = this.node(indent + 1)
-    else if (/^[\[{]/.test(value)) {
+    else if (/^[[{]/.test(value)) {
       let source = value
       while (!this.balanced(source) && this.peek()) source += ' ' + this.lines[this.pos++]!.text
       result = new Flow(source).value()
@@ -303,7 +303,7 @@ class Parser {
       }
       if (
         /^-(\s|$)/.test(rest) ||
-        (KEY.test(rest) && !/^[\[{"']/.test(rest)) ||
+        (KEY.test(rest) && !/^[[{"']/.test(rest)) ||
         (KEY.test(rest) && /^["']/.test(rest))
       ) {
         this.lines[this.pos] = {
@@ -384,7 +384,7 @@ export function parseYaml(text: string): Yaml[] {
         started = false
         return
       }
-      if (/^%/.test(raw) && !current.length) return
+      if (raw.startsWith('%') && !current.length) return
       const indent = raw.length - raw.replace(/^ +/, '').length
       const body = raw.slice(indent)
       const textValue = body.startsWith('#') ? '' : stripComment(body)
@@ -399,7 +399,7 @@ export function parseYaml(text: string): Yaml[] {
   return documents
 }
 
-const PLAIN = /^[^\s\-?:,\[\]{}#&*!|>'"%@`]([^:#]|:(?!\s)|#(?<!\s#))*$/
+const PLAIN = /^[^\s\-?:,[\]{}#&*!|>'"%@`]([^:#]|:(?!\s)|#(?<!\s#))*$/
 
 function format(value: string): string {
   if (value === '') return '""'
@@ -410,7 +410,7 @@ function format(value: string): string {
   if (
     !PLAIN.test(value) ||
     /\s$/.test(value) ||
-    /:$/.test(value) ||
+    value.endsWith(':') ||
     typeof scalar(value) !== 'string'
   )
     return /["\\]/.test(value) || /[\x00-\x1f]/.test(value)
@@ -585,7 +585,7 @@ export const yq: CommandHandler = async (ctx) => {
       operands.length === 1 &&
       !nullInput &&
       (await ctx.fs.stat(ctx.resolve(first)))?.kind === 'file' &&
-      !/^[.\[|]/.test(first)
+      !/^[.[|]/.test(first)
     )
       files.push(first)
     else {
@@ -604,7 +604,7 @@ export const yq: CommandHandler = async (ctx) => {
         ctx.stderr.write('Error: open ' + file + ': no such file or directory\n')
         return 1
       }
-      const json = input === 'json' || (input === 'auto' && /\.json$/.test(file))
+      const json = input === 'json' || (input === 'auto' && file.endsWith('.json'))
       try {
         documents.push({
           file,

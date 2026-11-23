@@ -89,7 +89,7 @@ function served(options: select.Options): Selection | undefined {
     model: options.model,
     provider: options.harness,
     thinking,
-    ...(options.harness === 'claude' && !/^claude-/.test(options.model)
+    ...(options.harness === 'claude' && !options.model.startsWith('claude-')
       ? { max_tokens: Tempo.outputTokens }
       : {}),
   }

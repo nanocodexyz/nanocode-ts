@@ -19,6 +19,7 @@ bench = false
 nanocode = { path = "../nanocodex/crates/nanocode" }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
+nanocode-board = { path = "../nanocodex/crates/runtime/board" }
 nanocode-code-mode = { path = "../nanocodex/crates/runtime/code-mode" }
 nanocode-sync = { path = "../nanocodex/crates/core/sync" }
 nanocode-http = { path = "../nanocodex/crates/core/http" }

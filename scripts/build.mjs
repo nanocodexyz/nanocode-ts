@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { arch, platform } from "node:os";
 import { fetchCrates, fingerprint as wasmFingerprint, manifest, manifestName } from "./wasm.mjs";
 import { build as buildPsh } from "./psh.mjs";
@@ -20,6 +20,40 @@ if (differing.length > 0 || rust.size === 0) {
   console.error(`AgentConfiguration in src/Contracts.ts and Configuration in src/wasm.rs differ: ${differing.join(", ") || "no fields found"}`);
   process.exit(1);
 }
+
+function entries(directory) {
+  try {
+    return readdirSync(directory);
+  } catch (error) {
+    if (["EACCES", "ENOENT", "ENOTDIR"].includes(error.code)) return [];
+    throw error;
+  }
+}
+function newest(directories, pattern, path) {
+  const found = directories.flatMap(directory => entries(directory).flatMap(name => {
+    const version = pattern.exec(name)?.[1];
+    return version === undefined || !existsSync(path(directory, name)) ? [] : [{ path: path(directory, name), version: Number(version) }];
+  }));
+  return found.sort((a, b) => b.version - a.version)[0]?.path;
+}
+const pythonCompiler = (() => {
+  if (process.env.NANOCODE_CC) return { path: process.env.NANOCODE_CC, source: "NANOCODE_CC" };
+  if (process.env.CC_wasm32_unknown_unknown) return { path: process.env.CC_wasm32_unknown_unknown, source: "CC_wasm32_unknown_unknown" };
+
+  const directories = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
+  const plain = directories.map(directory => join(directory, "clang")).find(path => existsSync(path));
+  if (plain) return { path: plain, source: "clang on PATH" };
+
+  const versioned = newest(directories, /^clang-(\d+)$/, join);
+  if (versioned) return { path: versioned, source: "newest clang-<version> on PATH" };
+
+  const llvm = newest(["/usr/lib"], /^llvm-(\d+)$/, (directory, name) => join(directory, name, "bin", "clang"));
+  if (llvm) return { path: llvm, source: "newest /usr/lib/llvm-<version>/bin/clang" };
+
+  console.error("python.wasm compiles C for wasm32 with clang: set NANOCODE_CC or CC_wasm32_unknown_unknown, or install clang, clang-<version> on PATH or /usr/lib/llvm-<version>/bin/clang");
+  process.exit(1);
+})();
+console.log("python.wasm C compiler: " + pythonCompiler.path + " (" + pythonCompiler.source + ")");
 
 const BINARYEN = "133";
 const binaryenDigests = {
@@ -118,6 +152,7 @@ let previousPsh;
 try { previousPsh = readFileSync("dist/psh.wasm"); } catch (error) { if (error.code !== "ENOENT") throw error; }
 if (!previousPsh?.equals(pshBytes)) writeFileSync("dist/psh.wasm", pshBytes);
 
+process.env.NANOCODE_CC = pythonCompiler.path;
 optimize(buildPython(), "target/python/python.opt.wasm", ["-Oz"]);
 const { module: pythonBytes, image: pythonImage } = bakePython(readFileSync("target/python/python.opt.wasm"), { image: true });
 let previousPython;

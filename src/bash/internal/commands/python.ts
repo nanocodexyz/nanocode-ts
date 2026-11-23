@@ -4,7 +4,7 @@ import { breathe, decode, encode, parentOf } from '../Fs.ts'
 import * as Psh from '../Psh.ts'
 import { mkdirs } from './files.ts'
 import * as Journal from './journal.ts'
-import { pip, shippedModules, sitePackages } from './pip.ts'
+import { pip, shippedModules, sitePackages, unsupportedImport } from './pip.ts'
 import * as RustPython from './rustpython.ts'
 import type { Options as PythonOptions, Sci } from '../../Python.ts'
 
@@ -203,20 +203,22 @@ async function apply(fs: FileSystem, changes: RustPython.Changes): Promise<void>
 
 function absent(missing: RustPython.Missing): string {
   const top = missing.module.split('.')[0]
+  const unsupported = unsupportedImport(missing.module)
   if (sciModules.includes(top))
     return (
-      "python3: No module named '" +
-      top +
-      "': " +
+      'python3: ' +
+      unsupported +
+      '; ' +
       top +
       " runs on nanocode-ts's separate polars interpreter (python-polars.wasm), which this host doesn't offer; pass it as Python's sci option"
     )
-  if (!missing.package) return missing.text
+  if (!missing.package) return unsupported ? 'python3: ' + unsupported : missing.text
   const head = 'python3: ' + missing.module + ': '
   const error = missing.text.startsWith(head)
     ? missing.text.slice(head.length).replace(/ \(this simulated shell has no [^)]*\)$/, '')
     : missing.text
   const named = /^No module named '([^']+)'/.exec(error)?.[1]
+  if (unsupported && (named === undefined || named === top)) return 'python3: ' + unsupported
   if (named === undefined) return 'python3: import ' + missing.module + ' failed: ' + error
   if (named !== top && !missing.module.startsWith(named + '.'))
     return (
@@ -696,7 +698,7 @@ async function executeRust(
       stepsPerMs: options.stepsPerMs,
     })
     for (const name of notImported)
-      if (sciModules.includes(name))
+      if (sciModules.includes(name) || unsupportedImport(name))
         ctx.stderr.write(absent({ module: name, package: false, text: '' }) + '\n')
     return status
   }
@@ -707,6 +709,12 @@ async function executeRust(
 const sciModules: readonly string[] = ['polars']
 
 function uncaughtImport(stderr: string): string[] {
+  if (
+    /UserWarning: Polars binary is missing!/.test(stderr) &&
+    /File "[^"]*\/polars\/[^"]+\.py", line \d+/.test(stderr)
+  )
+    return ['polars']
+
   const match = /ModuleNotFoundError: No module named '([A-Za-z_]\w*)[.']\S*\s*$/.exec(stderr)
   return match ? [match[1]!] : []
 }

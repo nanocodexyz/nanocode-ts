@@ -2,6 +2,7 @@ import type * as Contracts from '../Contracts.ts'
 import type * as App from './App.ts'
 
 const requestHeaders: Record<Contracts.ModelProvider, RegExp> = {
+  antigravity: /^(accept|content-type|x-goog-api-client|x-goog-user-project)$/,
   claude: /^(accept|content-type|anthropic-version|anthropic-beta|x-nanocode-hedge)$/,
   codex: /^(accept|content-type|x-session-affinity|x-nanocode-hedge)$/,
 }

@@ -30,6 +30,11 @@ export type Session = {
   dispose(): Promise<void>
 }
 
+type Lifecycle =
+  | { completion: Promise<void>; phase: 'closed' }
+  | { completion: Promise<void>; phase: 'closing' }
+  | { phase: 'open' }
+
 export function handName(hand: Bridge.Hand): string {
   return hand.name ?? 'machine'
 }
@@ -38,7 +43,10 @@ export async function open(options: Options): Promise<Session> {
   const { scope } = options
   let hand: Bridge.Hand | undefined
   let placed: Bridge.Hand | undefined
-  let disposed = false
+  let lifecycle: Lifecycle = { phase: 'open' }
+  const assertOpen = () => {
+    if (lifecycle.phase !== 'open') throw new Error('session is closed')
+  }
   const arrivals = new Set<() => void>()
   const launch = async () => {
     placed = hand
@@ -67,14 +75,17 @@ export async function open(options: Options): Promise<Session> {
       })
   }
   const settle = () => {
-    if (disposed || leases || reopening) return
+    if (lifecycle.phase !== 'open' || leases || reopening) return
     if (placed !== hand || runtime.closed) reopen()
   }
   const lease = async <T>(work: () => Promise<T>): Promise<T> => {
+    assertOpen()
     while (reopening) await reopening
-    if (runtime.closed && !disposed) {
+    assertOpen()
+    if (runtime.closed) {
       reopen()
       await reopening
+      assertOpen()
     }
     leases++
     try {
@@ -88,7 +99,7 @@ export async function open(options: Options): Promise<Session> {
   let token = options.relay?.token
   let relaying = false
   const connect = () => {
-    if (!options.relay || !token || relaying) return
+    if (lifecycle.phase !== 'open' || !options.relay || !token || relaying) return
     relaying = true
     Bridge.relay(
       options.relay.url,
@@ -176,6 +187,7 @@ export async function open(options: Options): Promise<Session> {
       })
     },
     hand() {
+      assertOpen()
       if (!options.relay) return undefined
       if (!token) {
         token = ClientRelay.createToken()
@@ -191,11 +203,19 @@ export async function open(options: Options): Promise<Session> {
         hand?.executor.catalog && Remote.toolsOnly(hand.executor.catalog) ? [hand.name] : [],
     }),
     runtime: () => runtime,
-    async dispose() {
-      disposed = true
+    dispose() {
+      if (lifecycle.phase !== 'open') return lifecycle.completion
+      const completion = Promise.resolve()
+        .then(async () => {
+          while (reopening) await reopening
+          if (!runtime.closed) await runtime.dispose()
+        })
+        .finally(() => {
+          lifecycle = { phase: 'closed', completion }
+        })
+      lifecycle = { phase: 'closing', completion }
       relay.abort()
-      while (reopening) await reopening
-      if (!runtime.closed) await runtime.dispose()
+      return completion
     },
   }
 }

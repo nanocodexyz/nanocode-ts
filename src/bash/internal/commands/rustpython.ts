@@ -64,19 +64,22 @@ export type Suspended = (
 
 export type Missing = { module: string; package: boolean; text: string }
 
+export type Order = readonly number[]
+
 export type Ran =
-  | { kind: 'exited'; status: number; stderr: Uint8Array; stdout: Uint8Array }
+  | { kind: 'exited'; order?: Order; status: number; stderr: Uint8Array; stdout: Uint8Array }
   | { kind: 'needs'; missing: readonly Missing[] }
   | {
       kind: 'refused'
       limit: number
+      order?: Order
       stderr: Uint8Array
       stdout: Uint8Array
       steps: bigint
       held: bigint
       asked: bigint
     }
-  | { kind: 'cancelled'; stderr: Uint8Array; stdout: Uint8Array }
+  | { kind: 'cancelled'; order?: Order; stderr: Uint8Array; stdout: Uint8Array }
 
 export type Budget = {
   cpuMs: number
@@ -109,6 +112,7 @@ const errno: Record<string, number> = {
   ENOTDIR: 20,
   ENOTEMPTY: 39,
   ENOTSUP: 95,
+  EPERM: 1,
   EROFS: 30,
 }
 
@@ -230,20 +234,24 @@ async function instantiate(
   }
   const stat = new Uint8Array(24)
   const stats = new DataView(stat.buffer)
+  // Milliseconds, kept to the microsecond, as the nanoseconds since the epoch python reads.
+  const nanos = (mtime: number) => BigInt(Math.round(mtime * 1000)) * 1000n
+  const put = (entry: { kind: string; mode: number; size: number; mtime: number }) => {
+    stats.setUint32(0, entry.kind === 'directory' ? 1 : entry.kind === 'symlink' ? 2 : 0, true)
+    stats.setUint32(4, entry.mode, true)
+    stats.setBigUint64(8, BigInt(entry.size), true)
+    stats.setBigInt64(16, nanos(entry.mtime), true)
+    return reply(stat)
+  }
+  const exists = (files: SyncFileSystem, path: string) =>
+    (files.lstat ? files.lstat(path) : files.stat(path)) !== null
   const found = (files: SyncFileSystem, path: string): FileStat => {
     const entry = files.stat(path)
     if (!entry) throw new FsError('ENOENT', path)
     return entry
   }
   const ops: ((files: SyncFileSystem, path: string, data: Uint8Array, arg: bigint) => bigint)[] = [
-    (files, path) => {
-      const entry = found(files, path)
-      stats.setUint32(0, entry.kind === 'directory' ? 1 : 0, true)
-      stats.setUint32(4, entry.mode, true)
-      stats.setBigUint64(8, BigInt(entry.size), true)
-      stats.setBigInt64(16, BigInt(Math.trunc(entry.mtime)) * 1_000_000n, true)
-      return reply(stat)
-    },
+    (files, path) => put(found(files, path)),
     (files, path) => reply(files.read(path)),
     (files, path, data, how) => {
       if (how === 2n && files.stat(path)) throw new FsError('EEXIST', path)
@@ -260,12 +268,12 @@ async function instantiate(
         ),
       ),
     (files, path) => {
-      if (files.stat(path)) throw new FsError('EEXIST', path)
+      if (exists(files, path)) throw new FsError('EEXIST', path)
       files.mkdir(path)
       return 0n
     },
     (files, path, _data, what) => {
-      const entry = found(files, path)
+      const entry = files.lstat?.(path) ?? found(files, path)
       if (what === 0n && entry.kind === 'directory') throw new FsError('EISDIR', path)
       if (what === 1n && entry.kind !== 'directory') throw new FsError('ENOTDIR', path)
       if (what === 1n && files.list(path).length) throw new FsError('ENOTEMPTY', path)
@@ -281,6 +289,47 @@ async function instantiate(
       const offset = new DataView(data.buffer, data.byteOffset, 8).getBigUint64(0, true)
       const start = Math.min(all.length, Number(offset))
       return reply(all.subarray(start, Math.min(all.length, start + Number(len))))
+    },
+    (files, path, _data, mode) => {
+      if (!files.chmod) throw new FsError('ENOTSUP', path)
+      found(files, path)
+      files.chmod(path, Number(mode))
+      return 0n
+    },
+    (files, path, _data, mtimeNs) => {
+      if (!files.utimes) throw new FsError('ENOTSUP', path)
+      found(files, path)
+      files.utimes(path, Number(BigInt.asIntN(64, mtimeNs) / 1000n) / 1000)
+      return 0n
+    },
+    (files, path) => {
+      const entry = files.lstat ? files.lstat(path) : files.stat(path)
+      if (!entry) throw new FsError('ENOENT', path)
+      return put(entry)
+    },
+    (files, path, data) => {
+      if (!files.symlink) throw new FsError('ENOTSUP', path)
+      if (exists(files, path)) throw new FsError('EEXIST', path)
+      files.symlink(decode(data), path)
+      return 0n
+    },
+    (files, path) => {
+      const target = files.readlink?.(path)
+      if (target != null) return reply(encode(target))
+      throw new FsError(exists(files, path) ? 'EINVAL' : 'ENOENT', path)
+    },
+    (files, path, data) => {
+      if (!files.link) throw new FsError('ENOTSUP', path)
+      files.link(path, decode(data))
+      return 0n
+    },
+    (files, path, _data, follow) => {
+      const links = files.links?.(path, follow !== 0n)
+      if (!links) return reply(new Uint8Array(0))
+      const out = new DataView(new ArrayBuffer(16))
+      out.setBigUint64(0, BigInt(links[0]), true)
+      out.setBigUint64(8, BigInt(links[1]), true)
+      return reply(new Uint8Array(out.buffer))
     },
   ]
   const imports = {
@@ -825,10 +874,12 @@ function decodeRan(bytes: Uint8Array): Ran {
     const why = u32()
     missing.push({ module, package: why === 0, text: text.decode(field()) })
   }
-  if (tag === 0) return { kind: 'exited', status: value | 0, stderr, stdout }
+  const order: number[] = []
+  if (at < bytes.length) for (let count = u32(); count > 0; count--) order.push(u32(), u32())
+  if (tag === 0) return { kind: 'exited', order, status: value | 0, stderr, stdout }
   if (tag === 1) return { kind: 'needs', missing }
-  if (tag === 2) return { kind: 'refused', limit: value, stderr, stdout, steps, held, asked }
-  return { kind: 'cancelled', stderr, stdout }
+  if (tag === 2) return { kind: 'refused', limit: value, order, stderr, stdout, steps, held, asked }
+  return { kind: 'cancelled', order, stderr, stdout }
 }
 
 type RunOptions = {
@@ -953,8 +1004,21 @@ export function report(
   ran: Exclude<Ran, { kind: 'needs' }>,
   budget: Budget,
 ): number {
-  ctx.stdout.write(decode(ran.stdout))
-  ctx.stderr.write(decode(ran.stderr))
+  let atOut = 0
+  let atErr = 0
+  const order = ran.order ?? []
+  for (let i = 0; i + 1 < order.length; i += 2) {
+    const len = order[i + 1] ?? 0
+    if (order[i] === 2) {
+      ctx.stderr.write(decode(ran.stderr.subarray(atErr, atErr + len)))
+      atErr += len
+    } else {
+      ctx.stdout.write(decode(ran.stdout.subarray(atOut, atOut + len)))
+      atOut += len
+    }
+  }
+  if (atOut < ran.stdout.length) ctx.stdout.write(decode(ran.stdout.subarray(atOut)))
+  if (atErr < ran.stderr.length) ctx.stderr.write(decode(ran.stderr.subarray(atErr)))
   if (ran.kind === 'exited') return ran.status
   if (ran.kind === 'cancelled') throw new CommandError('interrupted', 130)
   const limit = limits[ran.limit]

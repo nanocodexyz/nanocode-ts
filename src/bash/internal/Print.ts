@@ -80,7 +80,7 @@ function fallback(word: Word): string {
             ? quote(part.value)
             : "''"
           : part.value.replace(/[\s'"\\$\x60;&|()<>*?[\]#~]/g, '\\$&')
-      if (part.type === 'param') return '\${' + part.name + '}'
+      if (part.type === 'param') return '${' + part.name + '}'
       if (part.type === 'command') return '$(' + comsub(part.body) + ')'
       if (part.type === 'arith') return '$((' + fallback(part.expr) + '))'
       if (part.type === 'tilde') return '~' + part.user

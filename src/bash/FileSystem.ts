@@ -28,6 +28,8 @@ export type FileSystem = {
   symlink?(target: string, path: string): Promise<void>
   readlink?(path: string): Promise<string | null>
   lstat?(path: string): Promise<LinkStat | null>
+  link?(existing: string, path: string): Promise<void>
+  links?(path: string, follow: boolean): Promise<[number, number] | null>
   search?(dir: string, literals: string[], every?: Conjunction): Promise<string[] | null>
   excerpt?(path: string, literals: string[], every?: Conjunction): Promise<Uint8Array | null>
   matches?(dir: string, literals: string[], ignoreCase: boolean): Promise<string[] | null>
@@ -38,6 +40,8 @@ export type FileSystem = {
 
 export type SyncFileSystem = {
   chmod?(path: string, mode: number): void
+  link?(existing: string, path: string): void
+  links?(path: string, follow: boolean): [number, number] | null
   list(path: string): string[]
   lstat?(path: string): LinkStat | null
   mkdir(path: string): void
@@ -77,6 +81,7 @@ const messages: Record<string, string> = {
   EROFS: 'Read-only file system',
   EXDEV: 'Invalid cross-device link',
   EBUSY: 'Device or resource busy',
+  EPERM: 'Operation not permitted',
 }
 
 export class FsError extends Error {

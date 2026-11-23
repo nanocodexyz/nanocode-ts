@@ -190,7 +190,8 @@ export function local(paths: { module?: string | URL; data?: string | URL } = {}
 } {
   const node = (globalThis as { process?: { getBuiltinModule?: (id: string) => unknown } }).process
   const fs = node?.getBuiltinModule?.('node:fs') as
-    { promises: { readFile(path: string | URL): Promise<Uint8Array> } } | undefined
+    | { promises: { readFile(path: string | URL): Promise<Uint8Array> } }
+    | undefined
   const meta = import.meta as { resolve?: (specifier: string) => string; url?: string }
   const packaged = (name: string): URL =>
     meta.resolve

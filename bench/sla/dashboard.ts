@@ -5,7 +5,8 @@ import * as Path from 'node:path'
 
 type Row = { [key: string]: number | string | boolean | undefined }
 
-const arg = (name: string, fallback: string) => process.argv.find((a) => a.startsWith('--' + name + '='))?.slice(name.length + 3) ?? fallback
+const arg = (name: string, fallback: string) =>
+  process.argv.find((a) => a.startsWith('--' + name + '='))?.slice(name.length + 3) ?? fallback
 
 const dir = Path.resolve(arg('dir', 'output/bench/sla/dashboard'))
 const host = arg('host', '127.0.0.1')
@@ -25,7 +26,9 @@ const samplesFile = Path.join(dir, 'samples.jsonl')
 const cyclesFile = Path.join(dir, 'cycles.jsonl')
 const tempfail = 75
 
-const lanes = arg('lanes', 'live-nc-codex@now,live-codex,live-nc-claude@now,live-claude').split(',').filter(Boolean)
+const lanes = arg('lanes', 'live-nc-codex@now,live-codex,live-nc-claude@now,live-claude')
+  .split(',')
+  .filter(Boolean)
 
 const workers = arg('workers', 'claude:' + claudeModel + ',codex:' + codexModel + ',codex:glm-5.3')
   .split(',')
@@ -49,9 +52,16 @@ const kind = (lane: unknown) => {
   return entry
 }
 
-const append = (file: string, rows: readonly Row[]) => Fs.appendFileSync(file, rows.map((row) => JSON.stringify(row) + '\n').join(''))
+const append = (file: string, rows: readonly Row[]) =>
+  Fs.appendFileSync(file, rows.map((row) => JSON.stringify(row) + '\n').join(''))
 
-const read = (file: string): Row[] => (Fs.existsSync(file) ? Fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)) : [])
+const read = (file: string): Row[] =>
+  Fs.existsSync(file)
+    ? Fs.readFileSync(file, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+    : []
 
 const pct = (values: readonly number[], p: number) => {
   const sorted = [...values].sort((a, b) => a - b)
@@ -73,10 +83,33 @@ async function probe(provider: string, model: string, cycle: string): Promise<Ro
   const prompt = 'Count from 1 to 150, separated by spaces, nothing else.'
   const rows: Row[] = []
   for (let turn = 1; turn <= turns; turn++) {
-    const row: Row = { at: Date.now(), cycle, lane: 'worker-' + provider + '@' + model, model, name: 'Worker · ' + model, pair: provider, source: 'worker', turn }
+    const row: Row = {
+      at: Date.now(),
+      cycle,
+      lane: 'worker-' + provider + '@' + model,
+      model,
+      name: 'Worker · ' + model,
+      pair: provider,
+      source: 'worker',
+      turn,
+    }
     const t0 = performance.now()
     try {
-      const res = await fetch(new URL('sessions/' + session + '/turns?live=1', worker), { body: JSON.stringify({ model, prompt: prompt + ' (' + session + '-' + turn + ')', provider, request_id: 'turn-' + turn }), headers: { accept: 'text/event-stream', 'content-type': 'application/json', 'x-nanocode-visitor': visitor }, method: 'POST', signal: AbortSignal.timeout(timeout) })
+      const res = await fetch(new URL('sessions/' + session + '/turns?live=1', worker), {
+        body: JSON.stringify({
+          model,
+          prompt: prompt + ' (' + session + '-' + turn + ')',
+          provider,
+          request_id: 'turn-' + turn,
+        }),
+        headers: {
+          accept: 'text/event-stream',
+          'content-type': 'application/json',
+          'x-nanocode-visitor': visitor,
+        },
+        method: 'POST',
+        signal: AbortSignal.timeout(timeout),
+      })
       row.headers = Math.round(performance.now() - t0)
       row.http = res.status
       row.timing = res.headers.get('server-timing') ?? undefined
@@ -92,20 +125,36 @@ async function probe(provider: string, model: string, cycle: string): Promise<Ro
         if (cut < 0) continue
         const at = Math.round(performance.now() - t0)
         for (const block of buffer.slice(0, cut).split('\n\n')) {
-          const data = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5)).join('')
+          const data = block
+            .split('\n')
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5))
+            .join('')
           if (!data) continue
           const parsed = JSON.parse(data)
           const event = parsed.event?.event
-          if (event?.type === 'assistant.delta' && String(event.payload?.text ?? event.payload?.delta ?? '').length) row.ttft ??= at
+          if (
+            event?.type === 'assistant.delta' &&
+            String(event.payload?.text ?? event.payload?.delta ?? '').length
+          )
+            row.ttft ??= at
           if (parsed.event?.type === 'result') result = parsed.event
         }
         buffer = buffer.slice(cut + 2)
       }
       reader.cancel().catch(() => {})
       const timing = result?.timing ?? {}
-      const request = (timing.model_requests ?? []).filter((entry: any) => entry.provider).at(-1) ?? {}
-      Object.assign(row, { admission: timing.admission_ms, model_headers: request.headers_ms && Math.round(request.headers_ms), model_start: request.started_ms && Math.round(request.started_ms), open: timing.runtime_open_ms, status: result?.status })
-      if (row.ttft === undefined) row.error = 'no delta: http ' + res.status + ', result ' + (result?.status ?? 'missing')
+      const request =
+        (timing.model_requests ?? []).filter((entry: any) => entry.provider).at(-1) ?? {}
+      Object.assign(row, {
+        admission: timing.admission_ms,
+        model_headers: request.headers_ms && Math.round(request.headers_ms),
+        model_start: request.started_ms && Math.round(request.started_ms),
+        open: timing.runtime_open_ms,
+        status: result?.status,
+      })
+      if (row.ttft === undefined)
+        row.error = 'no delta: http ' + res.status + ', result ' + (result?.status ?? 'missing')
     } catch (error) {
       row.error = String(error)
     }
@@ -119,27 +168,104 @@ async function cycle() {
   const started = Date.now()
   const out = Path.join(dir, 'native')
   const label = 'cycle-' + id.replace(/[^0-9A-Za-z]/g, '')
-  const version = ChildProcess.spawnSync(process.env.NC_BIN_NOW!, ['--version'], { encoding: 'utf8' }).stdout.trim()
+  const version = ChildProcess.spawnSync(process.env.NC_BIN_NOW!, ['--version'], {
+    encoding: 'utf8',
+  }).stdout.trim()
   for (const lane of lanes) kind(lane)
-  const run = lanes.length === 0 ? undefined : ChildProcess.spawnSync(process.execPath, [Path.join(import.meta.dirname, 'run.ts'), '--live', '--lanes=' + lanes.join(','), '--codex-model=' + codexModel, '--claude-model=' + claudeModel, '--samples=1', '--turns=' + turns, '--settle=' + settle, '--timeout=' + timeout, '--label=' + label, '--out=' + out], { encoding: 'utf8' })
+  const run =
+    lanes.length === 0
+      ? undefined
+      : ChildProcess.spawnSync(
+          process.execPath,
+          [
+            Path.join(import.meta.dirname, 'run.ts'),
+            '--live',
+            '--lanes=' + lanes.join(','),
+            '--codex-model=' + codexModel,
+            '--claude-model=' + claudeModel,
+            '--samples=1',
+            '--turns=' + turns,
+            '--settle=' + settle,
+            '--timeout=' + timeout,
+            '--label=' + label,
+            '--out=' + out,
+          ],
+          { encoding: 'utf8' },
+        )
   ChildProcess.spawnSync('pkill', ['-f', Path.join(out, 'work') + '/'])
-  const nativeRows = read(Path.join(out, label + '.jsonl')).flatMap((sample) => (sample.turn === undefined ? Array.from({ length: turns }, (_, index) => ({ ...sample, turn: index + 1 })) : [sample])).map((sample): Row => ({ at: started, cycle: id, error: sample.error, lane: sample.lane, model: kind(sample.lane).model, name: kind(sample.lane).name, pair: kind(sample.lane).pair, ready: sample.ready, source: 'native', ttft: sample.e2e, turn: sample.turn }))
+  const nativeRows = read(Path.join(out, label + '.jsonl'))
+    .flatMap((sample) =>
+      sample.turn === undefined
+        ? Array.from({ length: turns }, (_, index) => ({ ...sample, turn: index + 1 }))
+        : [sample],
+    )
+    .map(
+      (sample): Row => ({
+        at: started,
+        cycle: id,
+        error: sample.error,
+        lane: sample.lane,
+        model: kind(sample.lane).model,
+        name: kind(sample.lane).name,
+        pair: kind(sample.lane).pair,
+        ready: sample.ready,
+        source: 'native',
+        ttft: sample.e2e,
+        turn: sample.turn,
+      }),
+    )
   append(samplesFile, nativeRows)
   const nativeDone = Date.now()
   const workerRows: Row[] = []
   for (const entry of workers) workerRows.push(...(await probe(entry.provider, entry.model, id)))
   append(samplesFile, workerRows)
   const rows = [...nativeRows, ...workerRows]
-  append(cyclesFile, [{ at: started, cycle: id, errors: rows.filter((row) => row.error).length, exit: run ? (run.status ?? String(run.signal)) : undefined, native_ms: nativeDone - started, rows: rows.length, status: 'done', total_ms: Date.now() - started, version }])
-  console.log(id, 'rows', rows.length, 'errors', rows.filter((row) => row.error).length, 'native_ms', nativeDone - started, 'total_ms', Date.now() - started)
+  append(cyclesFile, [
+    {
+      at: started,
+      cycle: id,
+      errors: rows.filter((row) => row.error).length,
+      exit: run ? (run.status ?? String(run.signal)) : undefined,
+      native_ms: nativeDone - started,
+      rows: rows.length,
+      status: 'done',
+      total_ms: Date.now() - started,
+      version,
+    },
+  ])
+  console.log(
+    id,
+    'rows',
+    rows.length,
+    'errors',
+    rows.filter((row) => row.error).length,
+    'native_ms',
+    nativeDone - started,
+    'total_ms',
+    Date.now() - started,
+  )
 }
 
 function schedule(log: number) {
   const at = Date.now()
-  const child = ChildProcess.spawn('flock', ['-n', '-E', String(tempfail), lock, process.execPath, import.meta.filename, '--cycle', ...process.argv.slice(2)], { stdio: ['ignore', log, log] })
+  const child = ChildProcess.spawn(
+    'flock',
+    [
+      '-n',
+      '-E',
+      String(tempfail),
+      lock,
+      process.execPath,
+      import.meta.filename,
+      '--cycle',
+      ...process.argv.slice(2),
+    ],
+    { stdio: ['ignore', log, log] },
+  )
   child.on('exit', (code, signal) => {
     if (code === tempfail) append(cyclesFile, [{ at, status: 'skipped' }])
-    else if (code !== 0) append(cyclesFile, [{ at, exit: code ?? String(signal), status: 'failed' }])
+    else if (code !== 0)
+      append(cyclesFile, [{ at, exit: code ?? String(signal), status: 'failed' }])
     setTimeout(() => schedule(log), interval)
   })
 }
@@ -155,16 +281,52 @@ function data(window: number) {
     const ok = rows.filter((row) => !row.error)
     const of = (values: readonly unknown[]) => {
       const numbers = values.filter((value): value is number => typeof value === 'number')
-      return numbers.length ? { n: numbers.length, p50: pct(numbers, 50), p99: pct(numbers, 99) } : undefined
+      return numbers.length
+        ? { n: numbers.length, p50: pct(numbers, 50), p99: pct(numbers, 99) }
+        : undefined
     }
     const stats = (metric: string) => of(ok.map((row) => row[metric]))
-    const split = ok.map((row) => ({ ...timing(row), model_headers: row.model_headers, model_start: row.model_start }))
+    const split = ok.map((row) => ({
+      ...timing(row),
+      model_headers: row.model_headers,
+      model_start: row.model_start,
+    }))
     const names = [...new Set(split.flatMap((entry) => Object.keys(entry)))]
-    const splits = rows[0]!.source === 'worker' ? Object.fromEntries(names.map((name) => [name, of(split.map((entry) => entry[name as keyof typeof entry]))])) : undefined
-    return { errors: rows.length - ok.length, headers: stats('headers'), lane: rows[0]!.lane, model: rows[0]!.model, name: rows[0]!.name, pair: rows[0]!.pair, source: rows[0]!.source, splits, ttft: stats('ttft'), turn: rows[0]!.turn }
+    const splits =
+      rows[0]!.source === 'worker'
+        ? Object.fromEntries(
+            names.map((name) => [
+              name,
+              of(split.map((entry) => entry[name as keyof typeof entry])),
+            ]),
+          )
+        : undefined
+    return {
+      errors: rows.length - ok.length,
+      headers: stats('headers'),
+      lane: rows[0]!.lane,
+      model: rows[0]!.model,
+      name: rows[0]!.name,
+      pair: rows[0]!.pair,
+      source: rows[0]!.source,
+      splits,
+      ttft: stats('ttft'),
+      turn: rows[0]!.turn,
+    }
   })
-  const measured = new Set(recent.filter((row) => row.source === 'native' && !row.error).map((row) => row.pair))
-  const missing = [...new Set(Object.values(native).map((entry) => entry.pair))].filter((pair) => !measured.has(pair)).map((pair) => ({ configured: lanes.filter((lane) => kind(lane).pair === pair), errors: recent.filter((row) => row.pair === pair && row.source === 'native' && row.error).map((row) => String(row.error)).slice(-1)[0], pair }))
+  const measured = new Set(
+    recent.filter((row) => row.source === 'native' && !row.error).map((row) => row.pair),
+  )
+  const missing = [...new Set(Object.values(native).map((entry) => entry.pair))]
+    .filter((pair) => !measured.has(pair))
+    .map((pair) => ({
+      configured: lanes.filter((lane) => kind(lane).pair === pair),
+      errors: recent
+        .filter((row) => row.pair === pair && row.source === 'native' && row.error)
+        .map((row) => String(row.error))
+        .slice(-1)[0],
+      pair,
+    }))
   const done = cycles.filter((entry) => entry.status === 'done')
   const latest = done.at(-1)
   return {
@@ -173,9 +335,23 @@ function data(window: number) {
     interval,
     lanes,
     missing,
-    latest: latest ? { cycle: latest, rows: samples.filter((row) => row.cycle === latest.cycle) } : undefined,
+    latest: latest
+      ? { cycle: latest, rows: samples.filter((row) => row.cycle === latest.cycle) }
+      : undefined,
     now: Date.now(),
-    series: recent.filter((row) => !row.error).map((row) => ({ at: row.at, cycle: row.cycle, headers: row.headers, lane: row.lane, model: row.model, name: row.name, source: row.source, ttft: row.ttft, turn: row.turn })),
+    series: recent
+      .filter((row) => !row.error)
+      .map((row) => ({
+        at: row.at,
+        cycle: row.cycle,
+        headers: row.headers,
+        lane: row.lane,
+        model: row.model,
+        name: row.name,
+        source: row.source,
+        ttft: row.ttft,
+        turn: row.turn,
+      })),
     workers,
     summary,
     window,

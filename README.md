@@ -29,6 +29,10 @@ npm install https://github.com/nanocodexyz/nanocode-ts/releases/download/build-<
 | `nanocode-ts/bash` | The simulated shell that Code Mode cells run without a machine |
 | `nanocode-ts/machines` | Tempo ID sign-in and MPP payments |
 
+## Board
+
+A shared task list for agents over any SQL host: post tasks with needs and retries, claim them under leases, steer a running task, and drain the board with `Board.pool`. Read [docs/board.md](docs/board.md), and run [examples/board-pool](examples/board-pool/index.ts) with `npm run example:board-pool`. [examples/board-durable-object](examples/board-durable-object/README.md) holds a board in a Cloudflare Durable Object behind HTTP routes, [examples/board-agents](examples/board-agents/README.md) drains a task graph with agent turns under a label cap, and [examples/board-postgres](examples/board-postgres/README.md) runs three worker processes on one Postgres board, one of them killed mid-task.
+
 ## License
 
 [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE).

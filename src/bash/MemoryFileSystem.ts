@@ -13,7 +13,10 @@ import { baseOf, encode, parentOf } from './internal/Fs.ts'
 
 export type MemoryFileSystem = FileSystem &
   Required<
-    Pick<FileSystem, 'chmod' | 'lstat' | 'readlink' | 'symlink' | 'utimes' | 'writeMany'>
+    Pick<
+      FileSystem,
+      'chmod' | 'link' | 'links' | 'lstat' | 'readlink' | 'symlink' | 'utimes' | 'writeMany'
+    >
   > & {
     changes(): Promise<Changes>
     readonly maxFileBytes: number
@@ -39,16 +42,20 @@ type Directory = {
 type File = {
   buffer?: Uint8Array
   data: Uint8Array
+  ino?: number
   kind: 'file'
   lowerMode?: number
   mode: number
   mtime: number
+  nlink?: number
   origin?: string
   pending?: number
   written?: boolean
 }
 
-type Node = File | Directory | { kind: 'link'; target: string; mtime: number; mode: number }
+type Link = { ino?: number; kind: 'link'; mode: number; mtime: number; nlink?: number; target: string }
+
+type Node = File | Directory | Link
 
 const nothing = new Uint8Array(0)
 
@@ -68,6 +75,7 @@ export function create(options: create.Options = {}): MemoryFileSystem {
   }
   const fetchedFiles = new Set<string>()
   let links = 0
+  let inodes = 0
 
   const fill = async (node: Directory) => {
     if (!node.pending || !lower || node.origin === undefined) return
@@ -258,6 +266,14 @@ export function create(options: create.Options = {}): MemoryFileSystem {
       }
       const bytes = append && existing ? existing.data : data
       if (bytes.length > maxFileBytes) throw new FsError('EFBIG', path)
+      if (existing?.kind === 'file' && (existing.nlink ?? 1) > 1) {
+        delete existing.buffer
+        delete existing.pending
+        existing.data = bytes
+        existing.mtime = Date.now()
+        existing.written = true
+        return
+      }
       parent.set(name, {
         kind: 'file',
         data: bytes,
@@ -293,6 +309,34 @@ export function create(options: create.Options = {}): MemoryFileSystem {
       if (!node) throw new FsError('ENOENT', path)
       if (node.kind === 'directory' && node.children.size) throw new FsError('ENOTEMPTY', path)
       parent.delete(baseOf(target))
+      if (node.kind !== 'directory' && node.nlink) node.nlink--
+    },
+
+    link(existing: string, path: string): void {
+      const source = real(existing, false)
+      const node = find(source)
+      if (!node) throw new FsError('ENOENT', existing)
+      if (node.kind === 'directory') throw new FsError('EPERM', existing)
+      const target = real(path, false)
+      const parent = directory(parentOf(target))
+      if (target === '/' || parent.has(baseOf(target))) throw new FsError('EEXIST', path)
+      node.nlink = (node.nlink ?? 1) + 1
+      node.ino ??= ++inodes
+      parent.set(baseOf(target), node)
+      if (node.kind === 'link') links++
+    },
+
+    links(path: string, follow: boolean): [number, number] | null {
+      let target: string
+      try {
+        target = real(path, follow)
+      } catch {
+        return null
+      }
+      const node = find(target)
+      if (!node || node.kind === 'directory' || node.ino === undefined || (node.nlink ?? 1) < 2)
+        return null
+      return [node.ino, node.nlink ?? 1]
     },
 
     chmod(path: string, mode: number): void {
@@ -357,8 +401,10 @@ export function create(options: create.Options = {}): MemoryFileSystem {
       const targetParent = directory(parentOf(target))
       const existing = targetParent.get(baseOf(target))
       if (existing?.kind === 'directory') throw new FsError('EISDIR', to)
+      if (existing === node) return
       sourceParent.delete(baseOf(source))
       targetParent.set(baseOf(target), node)
+      if (existing && existing.nlink) existing.nlink--
     },
   }
 
@@ -434,6 +480,18 @@ export function create(options: create.Options = {}): MemoryFileSystem {
     async symlink(target: string, path: string): Promise<void> {
       await fault(path, false)
       now.symlink(target, path)
+    },
+
+    async link(existing: string, path: string): Promise<void> {
+      await fault(existing, false)
+      await fault(path, false)
+      await held(existing)
+      now.link(existing, path)
+    },
+
+    async links(path: string, follow: boolean): Promise<[number, number] | null> {
+      await fault(path, follow)
+      return now.links(path, follow)
     },
 
     async readlink(path: string): Promise<string | null> {

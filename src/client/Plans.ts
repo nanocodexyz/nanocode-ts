@@ -56,8 +56,10 @@ export declare namespace create {
 
 const vendors: Record<Provider, RegExp> = { claude: /^claude-/, codex: /^gpt-/ }
 
-export function serves(provider: Provider, model?: string | undefined): boolean {
-  return !model || vendors[provider].test(model)
+export function serves(provider: string, model?: string | undefined): provider is Provider {
+  return (
+    (provider === 'claude' || provider === 'codex') && (!model || vendors[provider].test(model))
+  )
 }
 
 export function name(provider: Provider): string {

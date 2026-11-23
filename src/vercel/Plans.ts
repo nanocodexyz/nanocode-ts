@@ -30,7 +30,9 @@ export function create(options: Options, account: Options['account']): create.Re
   const subscription = Egress.subscription(plans)
   return {
     subscription: async (session) =>
-      Client.serves(session.provider, session.model) ? await subscription(session) : undefined,
+      Client.serves(session.provider, session.model)
+        ? await subscription({ ...session, provider: session.provider })
+        : undefined,
     routes: { GET: handle, POST: handle, DELETE: handle },
   }
 }

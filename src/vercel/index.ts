@@ -1,4 +1,5 @@
 export * as App from './App.ts'
+export * as Board from '../BoardPool.ts'
 export * as Gateway from './Gateway.ts'
 export * as Hands from './Hands.ts'
 export * as Harness from './Harness.ts'

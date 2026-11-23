@@ -38,6 +38,30 @@ const alternatives: Record<string, string> = {
   statsmodels: 'numpy and pandas (built in), such as numpy.linalg.lstsq for a regression',
 }
 
+const nativePackages: Record<string, string> = {
+  cryptography: 'cryptography',
+  lxml: 'lxml',
+  polars: 'polars',
+  pyarrow: 'pyarrow',
+  scipy: 'scipy',
+  sklearn: 'scikit-learn',
+  statsmodels: 'statsmodels',
+}
+
+export function unsupportedImport(module: string): string | undefined {
+  const top = module.split('.')[0]!
+  if (!Object.hasOwn(nativePackages, top)) return undefined
+  const name = nativePackages[top]!
+
+  return (
+    name +
+    ' is not supported in nanocode: the native backend required by ' +
+    module +
+    ' is not present in this interpreter' +
+    (alternatives[name] ? '. Instead: ' + alternatives[name] : '')
+  )
+}
+
 const carriedDists: Record<string, [string, string, string]> = {
   contourpy: ['contourpy', 'contourpy', '1.4.0'],
   cycler: ['cycler', 'cycler', '0.12.1'],
@@ -1200,6 +1224,8 @@ async function install(ctx: CommandContext, wanted: string[], flags: Flags): Pro
   }
   const warn = (text: string) => ctx.stderr.write('WARNING: ' + text + '\n')
   const present = await installed(ctx.fs)
+  const original = new Map(present)
+  const pending = new Map<string, { top: boolean; unit: Unit }>()
   const modules = await carriedOnce(ctx)
   await stubCarried(ctx, modules, present)
   const queue: { requirement: Requirement; top: boolean }[] = []
@@ -1229,10 +1255,7 @@ async function install(ctx: CommandContext, wanted: string[], flags: Flags): Pro
             )
     const name = fields(unit.metadata, 'Name')[0] ?? unit.distInfo
     const version = fields(unit.metadata, 'Version')[0] ?? ''
-    const have = present.get(normalize(name))
-    if (have) await remove(ctx.fs, have)
-    await place(ctx, unit, true)
-    if (unit.note) warn(name + ': ' + unit.note)
+    pending.set(normalize(name), { top: true, unit })
     present.set(normalize(name), {
       name,
       version,
@@ -1412,10 +1435,10 @@ async function install(ctx: CommandContext, wanted: string[], flags: Flags): Pro
           proj.info.name +
             ' ' +
             pick.text +
-            " needs compiled modules nanocode's Python does not carry (" +
+            ' is not supported in nanocode: missing target-native implementations (' +
             failure.modules.slice(0, 4).join(', ') +
             (failure.modules.length > 4 ? ', ... ' + failure.modules.length + ' in all' : '') +
-            ') and has no pure-Python fallback; python.wasm ships compiled ' +
+            '); no compatible pure-Python fallback was selected; python.wasm ships compiled ' +
             shippedModules.join(', ') +
             (alternatives[key] ? '. Instead: ' + alternatives[key] : ''),
           1,
@@ -1459,16 +1482,20 @@ async function install(ctx: CommandContext, wanted: string[], flags: Flags): Pro
       }
     }
     chosen.set(key, pick.text)
-    if (have) {
-      say('Uninstalling ' + have.name + '-' + have.version)
-      await remove(ctx.fs, have)
-    }
-    await place(ctx, unit, top)
-    if (unit.note) warn(proj.info.name + ': ' + unit.note)
+    pending.set(key, { top, unit })
     done.push(proj.info.name + '-' + pick.text)
     if (flags.deps)
       for (const next of dependencies(fields(unit.metadata, 'Requires-Dist'), requirement.extras))
         queue.push({ requirement: next, top: false })
+  }
+  for (const [key, item] of pending) {
+    const have = original.get(key)
+    if (have) {
+      say('Uninstalling ' + have.name + '-' + have.version)
+      await remove(ctx.fs, have)
+    }
+    await place(ctx, item.unit, item.top)
+    if (item.unit.note) warn(key + ': ' + item.unit.note)
   }
   if (done.length) say('Successfully installed ' + done.join(' '))
   return 0

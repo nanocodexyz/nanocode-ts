@@ -1,0 +1,107 @@
+name: release
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      contents: write # create the wasm-<fingerprint> and build-<commit> releases
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: nanocode-ts
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - id: plan
+        working-directory: nanocode-ts
+        run: |
+          print=$(node scripts/wasm.mjs)
+          echo "fingerprint=$print" >> "$GITHUB_OUTPUT"
+          echo "sdk=$(jq -r .revision sdk-revision.json)" >> "$GITHUB_OUTPUT"
+          head=$(git ls-remote origin refs/heads/master | cut -f1)
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "::notice::master moved to $head, which its own run releases"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          elif gh release view "build-${GITHUB_SHA::7}" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::notice::build-${GITHUB_SHA::7} already exists"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+          if gh release view "wasm-$print" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "wasm=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "wasm=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.plan.outputs.release == 'true' && steps.plan.outputs.wasm == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: nanocodex
+          persist-credentials: false
+          ref: ${{ steps.plan.outputs.sdk }}
+          repository: nanocodexyz/nanocode
+
+      - if: steps.plan.outputs.release == 'true' && steps.plan.outputs.wasm == 'true'
+        working-directory: nanocode-ts
+        run: |
+          sudo rm -rf /opt/ghc /usr/local/.ghcup /usr/local/lib/android /usr/share/dotnet
+          df -h .
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target wasm32-unknown-unknown
+          rustc --version
+          clang --version
+          clang --print-targets | grep wasm32
+
+      - if: steps.plan.outputs.release == 'true' && steps.plan.outputs.wasm == 'true'
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: cargo-${{ hashFiles('nanocode-ts/sdk-revision.json', 'nanocode-ts/Cargo.lock') }}-${{ steps.plan.outputs.fingerprint }}
+          path: |
+            ~/.cargo/git/db
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+            nanocode-ts/target
+          restore-keys: cargo-${{ hashFiles('nanocode-ts/sdk-revision.json', 'nanocode-ts/Cargo.lock') }}-
+
+      - if: steps.plan.outputs.release == 'true'
+        working-directory: nanocode-ts
+        run: node scripts/release.mjs
+
+      - if: "!cancelled() && steps.cache.outcome == 'success' && steps.cache.outputs.cache-hit != 'true'"
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+          path: |
+            ~/.cargo/git/db
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+            nanocode-ts/target
+
+      - if: always()
+        run: df -h "$GITHUB_WORKSPACE"
+
+  ci:
+    name: CI
+    needs: release
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository] the local form runs ci.yml at this run's commit

@@ -177,7 +177,11 @@ export async function create(options: create.Options = {}): Promise<Bash> {
       ...options.commands,
     }),
   )
-  if (!options.python?.unavailable && !options.python?.module && !(options.webassembly ?? compiles()))
+  if (
+    !options.python?.unavailable &&
+    !options.python?.module &&
+    !(options.webassembly ?? compiles())
+  )
     for (const name of ['python', 'python3', 'pip', 'pip3', 'uv'])
       if (!options.commands?.[name]) commands.delete(name)
   let calls = 0
@@ -722,6 +726,21 @@ function budgetedSync(
       charge(),
       devices.has(path) ? undefined : sync.write(path, data, append)
     ),
+    ...(sync.chmod ? { chmod: (path: string, mode: number) => (charge(), sync.chmod!(path, mode)) } : {}),
+    ...(sync.utimes
+      ? { utimes: (path: string, mtime: number) => (charge(), sync.utimes!(path, mtime)) }
+      : {}),
+    ...(sync.symlink
+      ? { symlink: (target: string, path: string) => (charge(), sync.symlink!(target, path)) }
+      : {}),
+    ...(sync.link
+      ? { link: (existing: string, path: string) => (charge(), sync.link!(existing, path)) }
+      : {}),
+    ...(sync.links
+      ? { links: (path: string, follow: boolean) => (charge(), sync.links!(path, follow)) }
+      : {}),
+    ...(sync.readlink ? { readlink: (path: string) => (charge(), sync.readlink!(path)) } : {}),
+    ...(sync.lstat ? { lstat: (path: string) => (charge(), sync.lstat!(path)) } : {}),
   }
 }
 
@@ -775,6 +794,12 @@ function budgeted(
       : {}),
     ...(fs.readlink ? { readlink: (path: string) => (charge(), fs.readlink!(path)) } : {}),
     ...(fs.lstat ? { lstat: (path: string) => (charge(), fs.lstat!(path)) } : {}),
+    ...(fs.link
+      ? { link: (existing: string, path: string) => (charge(), fs.link!(existing, path)) }
+      : {}),
+    ...(fs.links
+      ? { links: (path: string, follow: boolean) => (charge(), fs.links!(path, follow)) }
+      : {}),
     ...(fs.search
       ? {
           search: (dir: string, literals: string[], every?: FileSystem.Conjunction) => (

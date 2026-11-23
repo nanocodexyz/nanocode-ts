@@ -93,6 +93,7 @@ export const finishLevers = [
   'persistence_nudge',
   'skip_finish_check',
   'stop_at_target',
+  'tool_repair',
 ] as const
 
 export const codexSwitches = [
@@ -150,6 +151,7 @@ export type SessionDescriptor = SessionAuthority & {
   finish_retries?: number
   late_finish_check_ms?: number
   lean_cells?: boolean
+  tool_repair?: boolean
   low_effort_rounds?: boolean
   persist_finish?: boolean
   omit_media_on_empty_cut?: boolean
@@ -669,7 +671,9 @@ export function create<E extends Env>(options: create.Options<E>): create.Return
     options.subscription ??
     (plans &&
       ((account: string, env: E, provider: Contracts.ModelProvider) =>
-        plans.subscription(account, env as E & Plans.Env, provider)))
+        provider === 'antigravity'
+          ? false
+          : plans.subscription(account, env as E & Plans.Env, provider)))
   const served = (
     provider: Contracts.ModelProvider,
     model: string | undefined,
@@ -1561,7 +1565,7 @@ export function create<E extends Env>(options: create.Options<E>): create.Return
           object_id: this.ctx.id.toString(),
           method: request.method,
           operation,
-          error: error instanceof Error ? error.stack ?? error.message : String(error),
+          error: error instanceof Error ? (error.stack ?? error.message) : String(error),
         })
         return json({ error: 'session operation failed' }, 503)
       }

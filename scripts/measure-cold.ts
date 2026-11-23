@@ -273,7 +273,7 @@ async function prepare(provider, history) {
   await session.runtime.dispose()
   const size = session.store.db
     .prepare(
-      "SELECT COALESCE(SUM(LENGTH(body)), 0) AS records, COUNT(*) AS count, COALESCE(MAX(LENGTH(body)), 0) AS head FROM nanocode_log",
+      'SELECT COALESCE(SUM(LENGTH(body)), 0) AS records, COUNT(*) AS count, COALESCE(MAX(LENGTH(body)), 0) AS head FROM nanocode_log',
     )
     .get()
   session.store.db.close()

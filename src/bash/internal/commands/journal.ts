@@ -98,6 +98,12 @@ export function create(base: SyncFileSystem, options: { bytes: number }): Journa
       record(path)
       base.symlink!(target, path)
     }
+  if (base.link)
+    files.link = (existing, path) => {
+      record(path)
+      base.link!(existing, path)
+    }
+  if (base.links) files.links = (path, follow) => base.links!(path, follow)
   if (base.lstat) files.lstat = (path) => base.lstat!(path)
   if (base.readlink) files.readlink = (path) => base.readlink!(path)
   return {
@@ -191,6 +197,8 @@ export function view(
   if (files.utimes) fs.utimes = (path, mtime) => run(() => files.utimes!(path, mtime))
   if (files.symlink) fs.symlink = (target, path) => run(() => files.symlink!(target, path))
   if (files.lstat) fs.lstat = (path) => run(() => files.lstat!(path))
+  if (files.link) fs.link = (existing, path) => run(() => files.link!(existing, path))
+  if (files.links) fs.links = (path, follow) => run(() => files.links!(path, follow))
   if (files.readlink) fs.readlink = (path) => run(() => files.readlink!(path))
   if (!retry) fs.sync = files
   return fs

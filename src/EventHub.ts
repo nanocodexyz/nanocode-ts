@@ -272,9 +272,7 @@ export function create(retained: () => number, retainedBytes: () => number) {
       }
       const newer = state.tail.slice(low)
       const events =
-        requestId === undefined
-          ? newer
-          : newer.filter((event) => event.request_id === requestId)
+        requestId === undefined ? newer : newer.filter((event) => event.request_id === requestId)
       return {
         events,
         next_cursor: Math.max(after, state.tail[state.tail.length - 1].seq),

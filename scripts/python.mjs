@@ -1,5 +1,14 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+} from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
@@ -35,7 +44,17 @@ export function source() {
   const partial = directory + '.partial'
   rmSync(partial, { recursive: true, force: true })
   mkdirSync(partial, { recursive: true })
-  run(['sh', '-c', 'revision=$1; shift; git archive "$revision" "$@" | tar -x -C "$0"', partial, pin.revision, ...paths], sdk)
+  run(
+    [
+      'sh',
+      '-c',
+      'revision=$1; shift; git archive "$revision" "$@" | tar -x -C "$0"',
+      partial,
+      pin.revision,
+      ...paths,
+    ],
+    sdk,
+  )
   renameSync(partial, directory)
   return directory
 }
@@ -61,12 +80,28 @@ export function build() {
   fetchCrates(join(root, 'python'))
   const result = spawnSync(
     'cargo',
-    ['build', '--locked', '--offline', '--release', '--target', 'wasm32-unknown-unknown', '--target-dir', '../target/python'],
+    [
+      'build',
+      '--locked',
+      '--offline',
+      '--release',
+      '--target',
+      'wasm32-unknown-unknown',
+      '--target-dir',
+      '../target/python',
+    ],
     { cwd: join(root, 'python'), stdio: 'inherit' },
   )
   if (result.error) throw result.error
   if (result.status !== 0) process.exit(result.status ?? 1)
-  return join(root, 'target', 'python', 'wasm32-unknown-unknown', 'release', 'nanocode_python_wasm.wasm')
+  return join(
+    root,
+    'target',
+    'python',
+    'wasm32-unknown-unknown',
+    'release',
+    'nanocode_python_wasm.wasm',
+  )
 }
 
 function leb(bytes, at) {
@@ -146,7 +181,10 @@ function segments(memory) {
     at = end
   }
   if (runs.length <= maxDataSegments) return runs
-  const gaps = runs.slice(1).map((run, index) => run[0] - runs[index][1]).sort((a, b) => a - b)
+  const gaps = runs
+    .slice(1)
+    .map((run, index) => run[0] - runs[index][1])
+    .sort((a, b) => a - b)
   const widest = gaps[runs.length - maxDataSegments - 1]
   const merged = [runs[0]]
   for (const run of runs.slice(1)) {
@@ -169,7 +207,12 @@ function warmed(module, data) {
   new DataView(root.buffer).setUint32(4, 0o755, true)
   const imports = {
     python: {
-      host_fs: (op, path, len) => (op === 0 && len === 1 && view(path, 1)[0] === 0x2f ? reply(root) : op === 0 || op === 1 || op === 3 ? -2n : -30n),
+      host_fs: (op, path, len) =>
+        op === 0 && len === 1 && view(path, 1)[0] === 0x2f
+          ? reply(root)
+          : op === 0 || op === 1 || op === 3
+            ? -2n
+            : -30n,
       host_data(offset, ptr, len) {
         if (!data || offset + len > data.length) return 1
         view(ptr, len).set(data.subarray(offset, offset + len))
@@ -180,7 +223,8 @@ function warmed(module, data) {
         throw new Error('python.wasm panicked: ' + new TextDecoder().decode(view(ptr, len)))
       },
       host_random(ptr, len) {
-        for (let at = 0; at < len; at += 65536) crypto.getRandomValues(view(ptr + at, Math.min(65536, len - at)))
+        for (let at = 0; at < len; at += 65536)
+          crypto.getRandomValues(view(ptr + at, Math.min(65536, len - at)))
       },
       host_spawn: () => -95n,
       host_stopped: () => 0,
@@ -212,7 +256,14 @@ function warmed(module, data) {
   const fields = new DataView(out.buffer)
   if (fields.getUint32(0, true) !== 0 || fields.getUint32(4, true) !== 0) {
     const stdout = fields.getUint32(8, true)
-    throw new Error('the warm-up run ended with ' + fields.getUint32(0, true) + '/' + fields.getUint32(4, true) + ': ' + new TextDecoder().decode(out.subarray(12 + stdout)))
+    throw new Error(
+      'the warm-up run ended with ' +
+        fields.getUint32(0, true) +
+        '/' +
+        fields.getUint32(4, true) +
+        ': ' +
+        new TextDecoder().decode(out.subarray(12 + stdout)),
+    )
   }
   return new Uint8Array(exports.memory.buffer)
 }
@@ -243,7 +294,8 @@ function customSection(bytes, wanted) {
     at = start + size
     if (id !== 0) continue
     const [length, name] = leb(bytes, start)
-    if (new TextDecoder().decode(bytes.subarray(name, name + length)) === wanted) return bytes.subarray(name + length, at)
+    if (new TextDecoder().decode(bytes.subarray(name, name + length)) === wanted)
+      return bytes.subarray(name + length, at)
   }
   return undefined
 }
@@ -288,7 +340,8 @@ export function bake(bytes, options = {}) {
     }
     if (id === 5) {
       const [count, limits] = leb(body, 0)
-      if (count !== 1 || body[limits] > 1) throw new Error('python.wasm has an unexpected memory section')
+      if (count !== 1 || body[limits] > 1)
+        throw new Error('python.wasm has an unexpected memory section')
       const [, rest] = leb(body, limits + 1)
       const replaced = [1, body[limits], ...uleb(memory.length / pageBytes), ...body.subarray(rest)]
       parts.push(Uint8Array.from([5, ...uleb(replaced.length), ...replaced]))
@@ -301,11 +354,22 @@ export function bake(bytes, options = {}) {
         mutable += body[cursor + 1]
         cursor = expression(body, cursor + 2)
       }
-      if (mutable !== 1) throw new Error('python.wasm has ' + mutable + ' mutable globals, and the snapshot restores only the stack pointer')
+      if (mutable !== 1)
+        throw new Error(
+          'python.wasm has ' +
+            mutable +
+            ' mutable globals, and the snapshot restores only the stack pointer',
+        )
     }
     if (id === 11) {
       if (split) continue
-      const data = join8([Uint8Array.from(uleb(runs.length)), ...runs.flatMap(([from, to]) => [Uint8Array.from([0, 0x41, ...sleb(from), 0x0b, ...uleb(to - from)]), memory.subarray(from, to)])])
+      const data = join8([
+        Uint8Array.from(uleb(runs.length)),
+        ...runs.flatMap(([from, to]) => [
+          Uint8Array.from([0, 0x41, ...sleb(from), 0x0b, ...uleb(to - from)]),
+          memory.subarray(from, to),
+        ]),
+      ])
       parts.push(Uint8Array.from([11, ...uleb(data.length)]), data)
       continue
     }

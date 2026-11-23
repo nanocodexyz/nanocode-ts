@@ -3,7 +3,6 @@ export type ToolInput = {
   readonly raw: string
   arguments(): unknown
   push(delta: string): void
-  text(): string
 }
 
 const escapes: Record<string, string> = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' }
@@ -86,11 +85,6 @@ export function create(): ToolInput {
         }
       }
       if (role === 'value' && key !== undefined) fields.set(key, value)
-    },
-    text() {
-      if (!fields.size) return raw
-      if (fields.size === 1) return [...fields.values()][0]!
-      return [...fields].map(([key, value]) => `${key}: ${value}`).join('\n')
     },
   }
 }

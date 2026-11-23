@@ -1225,6 +1225,7 @@ async function command(instance: Instance, call: command.Call): Promise<number> 
     )
   const stdout = output(1)
   const stderr = output(2)
+  Shell.Output.pair(stdout, stderr)
 
   let env: Record<string, string> | undefined
   const environment = () => {

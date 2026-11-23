@@ -44,8 +44,7 @@ export function useWorkspaceFile(path: string | undefined): {
       const read = blobUrl.test(path)
         ? (files.blob?.(path) ?? Promise.reject(new Error('this transport serves no blobs')))
         : files.read(path)
-      const url = read
-        .then((blob) => ({ url: URL.createObjectURL(blob), type: blob.type }))
+      const url = read.then((blob) => ({ url: URL.createObjectURL(blob), type: blob.type }))
       entry = { at: Date.now(), url }
       cache.set(key, entry)
       url.catch(() => {

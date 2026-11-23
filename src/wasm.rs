@@ -1,3 +1,4 @@
+mod board;
 mod branch;
 mod bridge;
 mod cells;
@@ -22,6 +23,7 @@ use std::{
     time::Duration,
 };
 
+use nanocode::antigravity::GoogleBuilder;
 use nanocode::{
     AgentId, ClaudeClient, ClaudeHarness, ClaudeModel, CodeModeExecutors, CodeModeHost,
     CodexHarness, HarnessFamily, Model, ModelInfo, ModelSelection, ModelTransport, Nanocode,
@@ -52,9 +54,31 @@ use serde_json::{Map, Value, json, value::RawValue};
 #[derive(Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Provider {
+    Antigravity,
     #[default]
     Claude,
     Codex,
+}
+
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum GoogleRoute {
+    #[default]
+    ApiKey,
+    Vertex,
+    VertexExpress,
+    Gateway,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Google {
+    #[serde(default)]
+    auth: GoogleRoute,
+    #[serde(default)]
+    project: Option<String>,
+    #[serde(default)]
+    location: Option<String>,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
@@ -106,6 +130,7 @@ struct FinishLevers {
     finish_check_min_requests: Option<std::num::NonZeroU32>,
     finish_retries: Option<std::num::NonZeroU32>,
     fold_finish: bool,
+    tool_repair: bool,
     lean_cells: bool,
     late_finish_check: Option<Duration>,
     low_effort_rounds: bool,
@@ -147,6 +172,9 @@ enum Gateway {
 impl Provider {
     fn model(self) -> ModelSelection {
         match self {
+            Self::Antigravity => nanocode::antigravity::AntigravityHarness::selection(
+                nanocode::antigravity::DEFAULT_MODEL,
+            ),
             Self::Claude => ModelSelection::Claude(ClaudeModel::Opus55),
             Self::Codex => ModelSelection::Codex(Model::Sol),
         }
@@ -154,6 +182,7 @@ impl Provider {
 
     fn select(self, model: &str) -> Result<ModelSelection, String> {
         let selection = match self {
+            Self::Antigravity => nanocode::antigravity::AntigravityHarness::selection(model),
             Self::Claude => model.parse::<ClaudeModel>().map_or_else(
                 |_| ModelSelection::new(HarnessFamily::Claude, model),
                 ModelSelection::Claude,
@@ -204,6 +233,8 @@ struct Hedge {
     window: Option<NonZeroUsize>,
 }
 
+type Endpoints = (Option<Endpoint>, Option<Endpoint>, Option<Endpoint>);
+
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Providers {
@@ -224,6 +255,8 @@ struct Configuration {
     root_region: bool,
     #[serde(default)]
     provider: Provider,
+    #[serde(default)]
+    google: Option<Google>,
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
@@ -272,6 +305,8 @@ struct Configuration {
     fold_finish: bool,
     #[serde(default)]
     lean_cells: bool,
+    #[serde(default)]
+    tool_repair: bool,
     #[serde(default)]
     low_effort_rounds: bool,
     #[serde(default)]
@@ -511,7 +546,7 @@ impl Configuration {
         self.thinking.as_deref().map(str::parse).transpose()
     }
 
-    fn endpoints(&mut self) -> Result<(Option<Endpoint>, Option<Endpoint>), String> {
+    fn endpoints(&mut self) -> Result<Endpoints, String> {
         let root = Endpoint {
             endpoint: std::mem::take(&mut self.endpoint),
             subscription: self.subscription,
@@ -528,8 +563,9 @@ impl Configuration {
             Provider::Codex if codex.is_some() => {
                 Err("providers.codex names the session's own provider, which the top-level fields configure".into())
             }
-            Provider::Claude => Ok((Some(root), codex)),
-            Provider::Codex => Ok((claude, Some(root))),
+            Provider::Claude => Ok((Some(root), codex, None)),
+            Provider::Codex => Ok((claude, Some(root), None)),
+            Provider::Antigravity => Ok((claude, codex, Some(root))),
         }
     }
 }
@@ -564,6 +600,7 @@ struct Annotation {
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Command {
+    Board(board::Request),
     HandOpen {
         #[serde(default)]
         name: Option<String>,
@@ -881,6 +918,7 @@ impl WorkspaceToolSelection {
             (Self::All(tools), _) => Some(*tools),
             (Self::Providers { claude, .. }, Provider::Claude) => *claude,
             (Self::Providers { codex, .. }, Provider::Codex) => *codex,
+            (Self::Providers { .. }, Provider::Antigravity) => None,
         }
     }
 }
@@ -909,6 +947,7 @@ impl WebSearch {
             (Self::All(enabled), _) => *enabled,
             (Self::Providers { claude, .. }, Provider::Claude) => *claude,
             (Self::Providers { codex, .. }, Provider::Codex) => *codex,
+            (Self::Providers { .. }, Provider::Antigravity) => true,
         }
     }
 }
@@ -1116,6 +1155,7 @@ fn claude_harness(
             .finish_check(levers.finish_check)
             .fold_finish(levers.fold_finish)
             .lean_cells(levers.lean_cells)
+            .tool_repair(levers.tool_repair)
             .low_effort_rounds(levers.low_effort_rounds)
             .persist_finish(levers.persist_finish)
             .persistence_nudge(levers.persistence_nudge)
@@ -1169,6 +1209,87 @@ fn claude_harness(
     };
     (harness, client)
 }
+
+fn antigravity_harness(
+    endpoint: Endpoint,
+    google: Google,
+    model: &ModelSelection,
+    workspace: Option<&str>,
+) -> Result<nanocode::antigravity::AntigravityHarness, Opening> {
+    use nanocode::antigravity::{Auth, AuthMethod, Route};
+    if endpoint.subscription {
+        return Err(configuration(
+            "the antigravity harness takes a Gemini API key, a Vertex AI token or key, or a gateway the host authorizes, not a plan sign-in",
+        ));
+    }
+    if endpoint.gateway.is_some() {
+        return Err(configuration(
+            "the antigravity harness speaks Gemini generateContent: point endpoint at the Gemini API, Vertex AI or a gateway that serves it, without gateway",
+        ));
+    }
+    let base = endpoint.endpoint.trim().trim_end_matches('/');
+    let given = (!base.is_empty()).then(|| base.to_owned());
+    let location = google
+        .location
+        .filter(|location| !location.trim().is_empty())
+        .unwrap_or_else(|| nanocode::antigravity::VERTEX_GLOBAL_LOCATION.to_owned());
+    let (base_url, route) = match google.auth {
+        GoogleRoute::ApiKey => (
+            given.unwrap_or_else(|| GEMINI_API_BASE_URL.to_owned()),
+            Route::GeminiApi,
+        ),
+        GoogleRoute::VertexExpress => (
+            given.unwrap_or_else(|| nanocode::antigravity::vertex_base_url("global")),
+            Route::VertexExpress,
+        ),
+        GoogleRoute::Vertex => {
+            let Some(project) = google.project.filter(|project| !project.trim().is_empty()) else {
+                return Err(configuration(
+                    "google.auth vertex needs google.project, the Google Cloud project to bill",
+                ));
+            };
+            (
+                given.unwrap_or_else(|| nanocode::antigravity::vertex_base_url(&location)),
+                Route::Vertex { project, location },
+            )
+        }
+        GoogleRoute::Gateway => {
+            let Some(base) = given else {
+                return Err(configuration(
+                    "google.auth gateway needs endpoint, the gateway's base URL",
+                ));
+            };
+            (base, Route::Gateway)
+        }
+    };
+    let method = route.method();
+    let harness = nanocode::antigravity::AntigravityHarness::new()
+        .google(nanocode::antigravity::GoogleConfig {
+            method: Some(method),
+            ..nanocode::antigravity::GoogleConfig::default()
+        })
+        .endpoint(nanocode::antigravity::Endpoint {
+            base_url,
+            auth: Auth::None,
+            user_agent: format!("nanocode-ts ({})", AuthMethod::name(method)),
+            route,
+            notice: None,
+        })
+        .sender(Arc::new(transport::WorkerTransport::ANTIGRAVITY))
+        .files(Arc::new(workspace::HostFiles))
+        .shell(Arc::new(workspace::HostShell))
+        .model(model.as_str());
+    Ok(match workspace {
+        Some(root) => harness.app_data(
+            std::path::Path::new(root)
+                .join(".nanocode")
+                .join("antigravity"),
+        ),
+        None => harness,
+    })
+}
+
+const GEMINI_API_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 
 #[expect(
     clippy::too_many_arguments,
@@ -1315,7 +1436,17 @@ async fn open(mut config: Configuration) -> Result<Session, Opening> {
         }
     }
     let environment = resolve(environment)?;
-    let (claude, codex) = config.endpoints().map_err(configuration)?;
+    let (claude, codex, antigravity) = config.endpoints().map_err(configuration)?;
+    let antigravity = antigravity
+        .map(|endpoint| {
+            antigravity_harness(
+                endpoint,
+                config.google.take().unwrap_or_default(),
+                &model,
+                config.workspace.as_deref(),
+            )
+        })
+        .transpose()?;
     let claude_only = claude.is_some() && codex.is_none();
     let hedging = hedging(&config.hedge)?;
     let claude_search_tokens = claude.as_ref().map(|endpoint| endpoint.max_tokens);
@@ -1345,6 +1476,7 @@ async fn open(mut config: Configuration) -> Result<Session, Opening> {
                 finish_retries: config.finish_retries,
                 fold_finish: config.fold_finish,
                 lean_cells: config.lean_cells,
+                tool_repair: config.tool_repair,
                 late_finish_check: config
                     .late_finish_check_ms
                     .map(|ms| Duration::from_millis(ms.get())),
@@ -1412,7 +1544,7 @@ async fn open(mut config: Configuration) -> Result<Session, Opening> {
         Some(endpoint) => {
             let default = match config.provider {
                 Provider::Codex => model.as_codex(),
-                Provider::Claude => Some(Model::Sol),
+                Provider::Claude | Provider::Antigravity => Some(Model::Sol),
             };
             let Some(default) = default else {
                 return Err(configuration(format!("{model} is not a Codex model")));
@@ -1477,6 +1609,7 @@ async fn open(mut config: Configuration) -> Result<Session, Opening> {
         let replaced = match family {
             Provider::Claude => host_search[0],
             Provider::Codex => host_search[1],
+            Provider::Antigravity => true,
         };
         if !config.web_search.enabled(family) || replaced {
             return None;
@@ -1498,6 +1631,7 @@ async fn open(mut config: Configuration) -> Result<Session, Opening> {
                         nanocode::codex_tools::web_search_tool(endpoint, *prefix, transport)
                     }) as Arc<dyn Tool>
                 }),
+            Provider::Antigravity => None,
         }
     };
     let image_root = config.workspace.clone();
@@ -1603,6 +1737,9 @@ async fn open(mut config: Configuration) -> Result<Session, Opening> {
         builder = builder.images(
             nanocode::ImageHistory::default().with_blob_store(Arc::new(store::WorkerBlobs)),
         );
+    }
+    if let Some(harness) = antigravity {
+        builder = builder.google(harness);
     }
     if let Some((harness, _)) = claude {
         builder = builder.claude(harness.tools(gated(
@@ -2145,9 +2282,23 @@ fn models() -> Value {
             )
         })
         .collect::<Vec<_>>();
+    let antigravity = [nanocode::antigravity::DEFAULT_MODEL]
+        .into_iter()
+        .map(|model| {
+            let window = nanocode::antigravity::Profile::for_model(model).compaction_limit;
+            entry(
+                model,
+                nanocode::antigravity::AntigravityHarness::selection(model),
+                vec!["direct"],
+                window,
+                None,
+            )
+        })
+        .collect::<Vec<_>>();
     json!({"harnesses": [
         {"id": "claude", "models": claude},
         {"id": "codex", "models": codex},
+        {"id": "antigravity", "models": antigravity},
     ]})
 }
 
@@ -2157,6 +2308,7 @@ fn executed<T: Serialize>(future: impl Future<Output = Result<T, String>> + 'sta
 
 fn execute(command: Command) -> Executed {
     match command {
+        Command::Board(request) => executed(board::execute(request)),
         Command::HandOpen {
             name,
             workspace,

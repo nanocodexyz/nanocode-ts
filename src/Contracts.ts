@@ -1,4 +1,10 @@
-export type ModelProvider = 'claude' | 'codex'
+export type ModelProvider = 'antigravity' | 'claude' | 'codex'
+
+export type ToolProvider = Exclude<ModelProvider, 'antigravity'>
+
+export type GoogleAuth = 'api_key' | 'vertex' | 'vertex_express' | 'gateway'
+
+export type GoogleOptions = { auth?: GoogleAuth; project?: string; location?: string }
 
 export type Payer = 'deployment' | 'wallet' | 'plan'
 
@@ -99,6 +105,7 @@ export type CodexOptions = {
 export type AgentConfiguration = {
   scope: string
   provider?: ModelProvider
+  google?: GoogleOptions
   model?: string
   thinking?: Thinking
   instructions?: string
@@ -130,6 +137,7 @@ export type AgentConfiguration = {
   finish_retries?: number
   late_finish_check_ms?: number
   lean_cells?: boolean
+  tool_repair?: boolean
   low_effort_rounds?: boolean
   persist_finish?: boolean
   omit_media_on_empty_cut?: boolean
@@ -147,7 +155,7 @@ export type AgentConfiguration = {
   remote_children?: boolean
   child_lineage?: unknown
   hedge?: { cap_percent?: number; floor_ms?: number; window?: number }
-  providers?: Partial<Record<ModelProvider, ProviderEndpoint>>
+  providers?: Partial<Record<ToolProvider, ProviderEndpoint>>
   remote?: boolean
   root_region?: boolean
   code_mode?: boolean
@@ -163,11 +171,11 @@ export type AgentConfiguration = {
   codex_options?: CodexOptions
   environment?: AgentEnvironment
   tools?: HostTool[]
-  web_search?: boolean | Partial<Record<ModelProvider, boolean>>
+  web_search?: boolean | Partial<Record<ToolProvider, boolean>>
   workspace?: string
-  workspace_tools?: WorkspaceTools | Partial<Record<ModelProvider, WorkspaceTools>>
+  workspace_tools?: WorkspaceTools | Partial<Record<ToolProvider, WorkspaceTools>>
   mcp_servers?: McpServer[]
-  hand_tools?: Partial<Record<ModelProvider, HandToolSelection>>
+  hand_tools?: Partial<Record<ToolProvider, HandToolSelection>>
 }
 
 export type SubagentModel = { harness: ModelProvider; model: string }
@@ -385,6 +393,12 @@ export type SqlKind = 'store' | 'log'
 
 export type SqlAccess = 'read' | 'write' | 'schema'
 
+/**
+ * Which Board.pool wakes a write reaches: none, or every pool but from (the writing pool's own
+ * wake). Boards pass it to transaction for calls a pool makes through its wake's own.
+ */
+export type SqlReach = { readonly reach: 'none' | 'others'; readonly from?: unknown }
+
 export type SqlHost = {
   readonly value_limit?: number
   transaction(
@@ -392,6 +406,7 @@ export type SqlHost = {
     operation: string,
     statements: Statement[],
     access?: SqlAccess,
+    reach?: SqlReach,
   ): SqlValue[][][] | Promise<SqlValue[][][]>
 }
 
@@ -411,7 +426,7 @@ export type SocketHandshake = {
 
 export type SpareSocket = {
   request: {
-    provider: ModelProvider
+    provider: ToolProvider
     headers: [string, string][]
     origin: string | null
     subagent: Subagent | null
@@ -553,7 +568,7 @@ export type RuntimeOptions = {
   socket?: {
     open(
       request: {
-        provider: ModelProvider
+        provider: ToolProvider
         headers: [string, string][]
         origin: string | null
         subagent: Subagent | null

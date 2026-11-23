@@ -30,14 +30,25 @@ const scratch = mkdtempSync(join(tmpdir(), 'nanocode-ts-'))
 try {
   rmSync(join(root, 'dist'), { recursive: true, force: true })
   run(['npm', 'ci', '--ignore-scripts'])
-  if (spawnSync('gh', ['release', 'view', tag(print), '--repo', repository], { stdio: 'ignore' }).status !== 0) {
+  if (
+    spawnSync('gh', ['release', 'view', tag(print), '--repo', repository], { stdio: 'ignore' })
+      .status !== 0
+  ) {
     run(['node', 'scripts/build.mjs'])
     run(['node', 'scripts/publish-wasm.mjs', '--upload'])
   }
   run(['npm', 'run', 'prepare'])
   run(['npm', 'run', 'check:types'])
   const tarball = join(scratch, 'nanocode-ts-' + short + '.tgz')
-  renameSync(join(scratch, read(['npm', 'pack', '--ignore-scripts', '--silent', '--pack-destination', scratch]).split('\n').pop()), tarball)
+  renameSync(
+    join(
+      scratch,
+      read(['npm', 'pack', '--ignore-scripts', '--silent', '--pack-destination', scratch])
+        .split('\n')
+        .pop(),
+    ),
+    tarball,
+  )
   run([
     'gh',
     'release',

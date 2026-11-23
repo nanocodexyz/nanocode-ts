@@ -1,4 +1,5 @@
 export * as AgentRuntime from './AgentRuntime.ts'
+export * as Board from './BoardPool.ts'
 export * as Bridge from './Bridge.ts'
 export * as Contracts from './Contracts.ts'
 export * as EventHub from './EventHub.ts'

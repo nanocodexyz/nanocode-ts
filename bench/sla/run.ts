@@ -17,9 +17,11 @@ type Lane = {
 
 type Sample = { [key: string]: number | string | boolean | undefined }
 
-const arg = (name: string, fallback: string) => process.argv.find((a) => a.startsWith('--' + name + '='))?.slice(name.length + 3) ?? fallback
+const arg = (name: string, fallback: string) =>
+  process.argv.find((a) => a.startsWith('--' + name + '='))?.slice(name.length + 3) ?? fallback
 const now = () => process.hrtime.bigint()
-const ms = (a: bigint | string | undefined, b: bigint | string | undefined) => (a === undefined || b === undefined ? undefined : Number(BigInt(a) - BigInt(b)) / 1e6)
+const ms = (a: bigint | string | undefined, b: bigint | string | undefined) =>
+  a === undefined || b === undefined ? undefined : Number(BigInt(a) - BigInt(b)) / 1e6
 const sleep = (time: number) => new Promise((resolve) => setTimeout(resolve, time))
 
 const root = Path.resolve(arg('out', 'output/bench/sla'))
@@ -42,13 +44,24 @@ const claudeModel = arg('claude-model', 'claude-haiku-4-5')
 const model = arg('model', '')
 const samePrompt = process.argv.includes('--same-prompt')
 const nonces = new Map<number, string>()
-const nonce = (index: number) => nonces.get(index) ?? nonces.set(index, String(Math.random()).slice(2, 8)).get(index)!
+const nonce = (index: number) =>
+  nonces.get(index) ?? nonces.set(index, String(Math.random()).slice(2, 8)).get(index)!
 const codexModel = arg('codex-model', 'gpt-6-luna')
 const rows = 40
 const cols = 120
 
-const base = { HOME: '', LANG: 'C.UTF-8', PATH: process.env.PATH, TERM: 'xterm-256color', USER: process.env.USER }
-const proxy = Object.fromEntries(Object.entries(process.env).filter((entry) => /^(https?_proxy|no_proxy|node_extra_ca_certs|ssl_cert_file)$/i.test(entry[0])))
+const base = {
+  HOME: '',
+  LANG: 'C.UTF-8',
+  PATH: process.env.PATH,
+  TERM: 'xterm-256color',
+  USER: process.env.USER,
+}
+const proxy = Object.fromEntries(
+  Object.entries(process.env).filter((entry) =>
+    /^(https?_proxy|no_proxy|node_extra_ca_certs|ssl_cert_file)$/i.test(entry[0]),
+  ),
+)
 const bins = {
   claude: process.env.CLAUDE_BIN ?? 'claude',
   codex: process.env.CODEX_BIN ?? 'codex',
@@ -57,24 +70,81 @@ const bins = {
 
 const lanes: { [name: string]: Lane } = {
   claude: {
-    env: (home, url) => ({ ...base, ANTHROPIC_API_KEY: 'fixture-key', ANTHROPIC_BASE_URL: url, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', CLAUDE_CONFIG_DIR: home + '/.claude', DISABLE_AUTOUPDATER: '1', DISABLE_ERROR_REPORTING: '1', DISABLE_TELEMETRY: '1', HOME: home }),
-    exec: (home, url, prompt) => [bins.claude, '-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose', prompt],
+    env: (home, url) => ({
+      ...base,
+      ANTHROPIC_API_KEY: 'fixture-key',
+      ANTHROPIC_BASE_URL: url,
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      CLAUDE_CONFIG_DIR: home + '/.claude',
+      DISABLE_AUTOUPDATER: '1',
+      DISABLE_ERROR_REPORTING: '1',
+      DISABLE_TELEMETRY: '1',
+      HOME: home,
+    }),
+    exec: (home, url, prompt) => [
+      bins.claude,
+      '-p',
+      '--output-format',
+      'stream-json',
+      '--include-partial-messages',
+      '--verbose',
+      prompt,
+    ],
     ready: '\u276f',
     setup: (home, cwd) => {
       Fs.mkdirSync(home + '/.claude', { recursive: true })
-      Fs.writeFileSync(home + '/.claude/.claude.json', JSON.stringify({ bypassPermissionsModeAccepted: true, customApiKeyResponses: { approved: ['fixture-key', anthropicKey.slice(-20)], rejected: [] }, hasCompletedOnboarding: true, projects: { [Fs.realpathSync(cwd)]: { hasCompletedProjectOnboarding: true, hasTrustDialogAccepted: true } } }))
-      Fs.writeFileSync(home + '/.claude/settings.json', JSON.stringify({ permissions: { allow: ['Bash(true)'] }, theme: 'dark' }))
+      Fs.writeFileSync(
+        home + '/.claude/.claude.json',
+        JSON.stringify({
+          bypassPermissionsModeAccepted: true,
+          customApiKeyResponses: {
+            approved: ['fixture-key', anthropicKey.slice(-20)],
+            rejected: [],
+          },
+          hasCompletedOnboarding: true,
+          projects: {
+            [Fs.realpathSync(cwd)]: {
+              hasCompletedProjectOnboarding: true,
+              hasTrustDialogAccepted: true,
+            },
+          },
+        }),
+      )
+      Fs.writeFileSync(
+        home + '/.claude/settings.json',
+        JSON.stringify({ permissions: { allow: ['Bash(true)'] }, theme: 'dark' }),
+      )
     },
     tui: () => [bins.claude, ...(model ? ['--model', model] : [])],
   },
   codex: {
-    env: (home) => ({ ...base, BENCH_KEY: 'fixture-key', CODEX_HOME: home + '/.codex', HOME: home }),
+    env: (home) => ({
+      ...base,
+      BENCH_KEY: 'fixture-key',
+      CODEX_HOME: home + '/.codex',
+      HOME: home,
+    }),
     ready: 'Ask Codex to do anything',
     setup: (home, cwd) => {
       Fs.mkdirSync(home + '/.codex', { recursive: true })
-      Fs.writeFileSync(home + '/.codex/config.toml', 'approval_policy = "never"\ncheck_for_update_on_startup = false\nsandbox_mode = "danger-full-access"\n\n[analytics]\nenabled = false\n\n[feedback]\nenabled = false\n\n[projects."' + cwd + '"]\ntrust_level = "trusted"\n')
+      Fs.writeFileSync(
+        home + '/.codex/config.toml',
+        'approval_policy = "never"\ncheck_for_update_on_startup = false\nsandbox_mode = "danger-full-access"\n\n[analytics]\nenabled = false\n\n[feedback]\nenabled = false\n\n[projects."' +
+          cwd +
+          '"]\ntrust_level = "trusted"\n',
+      )
     },
-    tui: (home, url) => [bins.codex, '-c', 'model_provider="bench"', '-c', 'model_providers.bench={name="bench",base_url="' + url + '/v1",wire_api="responses",env_key="BENCH_KEY"}', '-m', 'bench/model'],
+    tui: (home, url) => [
+      bins.codex,
+      '-c',
+      'model_provider="bench"',
+      '-c',
+      'model_providers.bench={name="bench",base_url="' +
+        url +
+        '/v1",wire_api="responses",env_key="BENCH_KEY"}',
+      '-m',
+      'bench/model',
+    ],
   },
   'live-claude': {
     env: () => ({ ...process.env, TERM: base.TERM }),
@@ -91,7 +161,17 @@ const lanes: { [name: string]: Lane } = {
   },
   'live-nc-claude': liveNcLane(bins.nc, claudeModel),
   'rejected-claude': {
-    env: (home) => ({ ...base, ...proxy, ANTHROPIC_API_KEY: anthropicKey, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', CLAUDE_CONFIG_DIR: home + '/.claude', DISABLE_AUTOUPDATER: '1', DISABLE_ERROR_REPORTING: '1', DISABLE_TELEMETRY: '1', HOME: home }),
+    env: (home) => ({
+      ...base,
+      ...proxy,
+      ANTHROPIC_API_KEY: anthropicKey,
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      CLAUDE_CONFIG_DIR: home + '/.claude',
+      DISABLE_AUTOUPDATER: '1',
+      DISABLE_ERROR_REPORTING: '1',
+      DISABLE_TELEMETRY: '1',
+      HOME: home,
+    }),
     ready: '\u276f',
     setup: (home, cwd) => lanes.claude!.setup!(home, cwd),
     tui: () => [bins.claude, '--model', claudeModel],
@@ -103,20 +183,81 @@ const lanes: { [name: string]: Lane } = {
 
 function ncLane(bin: string): Lane {
   return {
-    env: (home) => ({ ...base, AI_GATEWAY_API_KEY: 'fixture-key', HOME: home, NANOCODE_TELEMETRY: 'off' }),
-    exec: (home, url, prompt) => [bin, 'exec', '--home', home + '/.nanocode', '--gateway', 'vercel', '--gateway-base-url', url + '/v1', '-m', 'luna', '--ephemeral', prompt],
+    env: (home) => ({
+      ...base,
+      AI_GATEWAY_API_KEY: 'fixture-key',
+      HOME: home,
+      NANOCODE_TELEMETRY: 'off',
+    }),
+    exec: (home, url, prompt) => [
+      bin,
+      'exec',
+      '--home',
+      home + '/.nanocode',
+      '--gateway',
+      'vercel',
+      '--gateway-base-url',
+      url + '/v1',
+      '-m',
+      'luna',
+      '--ephemeral',
+      prompt,
+    ],
     ready: 'Ask anything',
-    resume: (home, url) => [bin, '--home', home + '/.nanocode', '--gateway', 'vercel', '--gateway-base-url', url + '/v1', '-m', 'luna', '--continue'],
-    tui: (home, url) => [bin, '--home', home + '/.nanocode', '--gateway', 'vercel', '--gateway-base-url', url + '/v1', '-m', 'luna', '--ephemeral'],
+    resume: (home, url) => [
+      bin,
+      '--home',
+      home + '/.nanocode',
+      '--gateway',
+      'vercel',
+      '--gateway-base-url',
+      url + '/v1',
+      '-m',
+      'luna',
+      '--continue',
+    ],
+    tui: (home, url) => [
+      bin,
+      '--home',
+      home + '/.nanocode',
+      '--gateway',
+      'vercel',
+      '--gateway-base-url',
+      url + '/v1',
+      '-m',
+      'luna',
+      '--ephemeral',
+    ],
   }
 }
 
 function ncClaudeLane(bin: string): Lane {
   return {
-    env: (home, url) => ({ ...base, HOME: home, NANOCODE_ANTHROPIC_API_KEY: 'fixture-key', NANOCODE_ANTHROPIC_BASE_URL: url + '/v1', NANOCODE_TELEMETRY: 'off' }),
-    exec: (home, url, prompt) => [bin, 'exec', '--home', home + '/.nanocode', '-m', 'claude-opus-4-6', '--ephemeral', prompt],
+    env: (home, url) => ({
+      ...base,
+      HOME: home,
+      NANOCODE_ANTHROPIC_API_KEY: 'fixture-key',
+      NANOCODE_ANTHROPIC_BASE_URL: url + '/v1',
+      NANOCODE_TELEMETRY: 'off',
+    }),
+    exec: (home, url, prompt) => [
+      bin,
+      'exec',
+      '--home',
+      home + '/.nanocode',
+      '-m',
+      'claude-opus-4-6',
+      '--ephemeral',
+      prompt,
+    ],
     ready: 'Ask anything',
-    tui: (home) => [bin, '--home', home + '/.nanocode', ...(model ? ['--harness', 'claude', '-m', model] : ['-m', 'claude-opus-4-6']), '--ephemeral'],
+    tui: (home) => [
+      bin,
+      '--home',
+      home + '/.nanocode',
+      ...(model ? ['--harness', 'claude', '-m', model] : ['-m', 'claude-opus-4-6']),
+      '--ephemeral',
+    ],
   }
 }
 
@@ -130,7 +271,13 @@ function liveNcLane(bin: string, model: string): Lane {
 }
 
 function rejectedLane(bin: string, kind: string): Lane {
-  const env = kind === 'claude' ? { NANOCODE_ANTHROPIC_API_KEY: anthropicKey, NANOCODE_ANTHROPIC_BASE_URL: 'https://api.anthropic.com/v1' } : { AI_GATEWAY_API_KEY: 'invalid' }
+  const env =
+    kind === 'claude'
+      ? {
+          NANOCODE_ANTHROPIC_API_KEY: anthropicKey,
+          NANOCODE_ANTHROPIC_BASE_URL: 'https://api.anthropic.com/v1',
+        }
+      : { AI_GATEWAY_API_KEY: 'invalid' }
   const args = kind === 'claude' ? ['-m', claudeModel] : ['--gateway', 'vercel', '-m', 'luna']
   return {
     env: (home) => ({ ...base, ...env, ...proxy, HOME: home, NANOCODE_TELEMETRY: 'off' }),
@@ -167,9 +314,10 @@ const replies: readonly [RegExp, (match: RegExpExecArray) => string][] = [
   [/\x1b\[14t/g, () => '\x1b[4;' + rows * 20 + ';' + cols * 10 + 't'],
   [/\x1b\[16t/g, () => '\x1b[6;20;10t'],
 ]
-const ansi = /\x1b\[[0-9;?<>=!]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1bP[^\x1b]*\x1b\\|\x1b[()][0-9A-Za-z]|\x1b[=>78DEHMNOZc]/g
+const ansi =
+  /\x1b\[[0-9;?<>=!]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1bP[^\x1b]*\x1b\\|\x1b[()][0-9A-Za-z]|\x1b[=>78DEHMNOZc]/g
 const noise = /[\s\x00-\x1f\x7f\u2800-\u28ff*·✢✳✶✻✽]/g
-const partial = /\x1b(?:\[[0-9;?<>=!]*[ -\/]*|\][^\x07\x1b]*\x1b?|P[^\x1b]*\x1b?|[()])?$/
+const partial = /\x1b(?:\[[0-9;?<>=!]*[ -/]*|\][^\x07\x1b]*\x1b?|P[^\x1b]*\x1b?|[()])?$/
 
 const contains = (text: string) => {
   const word = text.replace(/\s/g, '')
@@ -184,7 +332,12 @@ function replied(reply: NonNullable<Lane['reply']>, text: string) {
   return (flat: string) => {
     for (let i = flat.indexOf(reply.glyph); i >= 0; i = flat.indexOf(reply.glyph, i + 1)) {
       const rest = flat.slice(i + reply.glyph.length)
-      if (reply.strict ? head.test(flat.slice(i)) : !/^[^A-Za-z]*Thinking/.test(rest) && near.test(rest.slice(0, replyWindow))) return true
+      if (
+        reply.strict
+          ? head.test(flat.slice(i))
+          : !/^[^A-Za-z]*Thinking/.test(rest) && near.test(rest.slice(0, replyWindow))
+      )
+        return true
     }
     return false
   }
@@ -193,9 +346,19 @@ function replied(reply: NonNullable<Lane['reply']>, text: string) {
 const quote = (word: string) => "'" + word.replaceAll("'", "'\\''") + "'"
 
 function terminal(command: readonly string[], env: NodeJS.ProcessEnv, cwd: string) {
-  const line = 'stty rows ' + rows + ' cols ' + cols + ' 2>/dev/null; exec ' + command.map(quote).join(' ')
-  const child = ChildProcess.spawn('script', ['-qfec', line, '/dev/null'], { cwd, detached: true, env, stdio: ['pipe', 'pipe', 'pipe'] })
-  const watches: { at?: bigint; match: (flat: string) => boolean; resolve: (at: bigint) => void }[] = []
+  const line =
+    'stty rows ' + rows + ' cols ' + cols + ' 2>/dev/null; exec ' + command.map(quote).join(' ')
+  const child = ChildProcess.spawn('script', ['-qfec', line, '/dev/null'], {
+    cwd,
+    detached: true,
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  const watches: {
+    at?: bigint
+    match: (flat: string) => boolean
+    resolve: (at: bigint) => void
+  }[] = []
   let flat = ''
   let pending = ''
   let plain = ''
@@ -215,10 +378,11 @@ function terminal(command: readonly string[], env: NodeJS.ProcessEnv, cwd: strin
     if (process.env.SLA_STREAM) trace.push([at, visible])
     plain = (plain + visible).slice(-65536)
     flat = (flat + visible.replace(noise, '')).slice(-65536)
-    for (const watch of watches) if (watch.at === undefined && watch.match(flat)) {
-      watch.at = at
-      watch.resolve(at)
-    }
+    for (const watch of watches)
+      if (watch.at === undefined && watch.match(flat)) {
+        watch.at = at
+        watch.resolve(at)
+      }
   })
   child.stderr.resume()
   return {
@@ -248,15 +412,28 @@ function terminal(command: readonly string[], env: NodeJS.ProcessEnv, cwd: strin
 }
 
 function fixture() {
-  const child = ChildProcess.spawn(process.execPath, [Path.join(import.meta.dirname, 'fixture.ts')], { env: { ...process.env, PORT: '0' }, stdio: ['ignore', 'pipe', 'inherit'] })
-  return new Promise<{ child: ChildProcess.ChildProcess; url: string }>((resolve) => child.stdout.once('data', (data: Buffer) => resolve({ child, url: 'http://127.0.0.1:' + JSON.parse(data.toString()).port })))
+  const child = ChildProcess.spawn(
+    process.execPath,
+    [Path.join(import.meta.dirname, 'fixture.ts')],
+    { env: { ...process.env, PORT: '0' }, stdio: ['ignore', 'pipe', 'inherit'] },
+  )
+  return new Promise<{ child: ChildProcess.ChildProcess; url: string }>((resolve) =>
+    child.stdout.once('data', (data: Buffer) =>
+      resolve({ child, url: 'http://127.0.0.1:' + JSON.parse(data.toString()).port }),
+    ),
+  )
 }
 
 async function log(url: string, run: string) {
   return (await (await fetch(url + '/_log?run=' + run)).json()) as any[]
 }
 
-function derive(entries: any[], enter: bigint, seen: bigint | undefined, last: bigint | undefined): Sample {
+function derive(
+  entries: any[],
+  enter: bigint,
+  seen: bigint | undefined,
+  last: bigint | undefined,
+): Sample {
   const main = entries.filter((entry) => entry.kind !== 'side')
   const text = main.find((entry) => entry.kind === 'text')
   const toolEntry = main.find((entry) => entry.kind === 'tool')
@@ -266,8 +443,16 @@ function derive(entries: any[], enter: bigint, seen: bigint | undefined, last: b
     conn_new: first?.conn_new,
     e2e: ms(seen, enter),
     fixture: text ? ms(text.first_token_ns, first.arrive_ns) : undefined,
-    overhead: text && seen ? ms(seen, enter)! - ms(text.first_token_ns, text.arrive_ns)! - (toolEntry ? ms(toolEntry.done_ns, toolEntry.arrive_ns)! : 0) : undefined,
-    provider_tps: text && tokens > 1 ? (tokens - 1) / (ms(text.last_token_ns, text.first_token_ns)! / 1e3) : undefined,
+    overhead:
+      text && seen
+        ? ms(seen, enter)! -
+          ms(text.first_token_ns, text.arrive_ns)! -
+          (toolEntry ? ms(toolEntry.done_ns, toolEntry.arrive_ns)! : 0)
+        : undefined,
+    provider_tps:
+      text && tokens > 1
+        ? (tokens - 1) / (ms(text.last_token_ns, text.first_token_ns)! / 1e3)
+        : undefined,
     render: text && seen ? ms(seen, text.first_token_ns) : undefined,
     rendered_tps: seen && last && tokens > 1 ? (tokens - 1) / (ms(last, seen)! / 1e3) : undefined,
     request_bytes: first?.request_bytes,
@@ -297,34 +482,116 @@ async function tuiSample(name: string, lane: Lane, url: string, index: number): 
   }
   await sleep(settle)
   for (let turn = 1; turn <= turns; turn++) {
-    const run = samePrompt ? 'r' + index + '-t' + turn + '-' + nonce(index) : name.replace(/[^A-Za-z0-9]/g, '-') + '-' + index + '-' + turn + '-' + String(Math.random()).slice(2, 8)
+    const run = samePrompt
+      ? 'r' + index + '-t' + turn + '-' + nonce(index)
+      : name.replace(/[^A-Za-z0-9]/g, '-') +
+        '-' +
+        index +
+        '-' +
+        turn +
+        '-' +
+        String(Math.random()).slice(2, 8)
     const mark = marks(turn)
     term.reset()
     const pair = mark.first.slice(0, 2)
-    term.write(live ? "Reply with only the word formed by writing '" + pair + "' four times. (" + run + ')' : 'Reply SLA[run=' + run + ',turn=' + turn + ',tokens=' + tokens + ',rate=' + rate + ',ttft=' + ttft + ',tool=' + tool + ']')
+    term.write(
+      live
+        ? "Reply with only the word formed by writing '" + pair + "' four times. (" + run + ')'
+        : 'Reply SLA[run=' +
+            run +
+            ',turn=' +
+            turn +
+            ',tokens=' +
+            tokens +
+            ',rate=' +
+            rate +
+            ',ttft=' +
+            ttft +
+            ',tool=' +
+            tool +
+            ']',
+    )
     await sleep(200)
     const idle = now()
-    while (lane.busy && term.plain().slice(-600).replace(/\s/g, '').includes(lane.busy.replace(/\s/g, '')) && ms(now(), idle)! < 15000) await sleep(20)
+    while (
+      lane.busy &&
+      term.plain().slice(-600).replace(/\s/g, '').includes(lane.busy.replace(/\s/g, '')) &&
+      ms(now(), idle)! < 15000
+    )
+      await sleep(20)
     const wall = Date.now()
     const enter = now()
     term.write('\r')
     if (process.env.SLA_DEBUG) console.error(name, index, turn, 'enter')
     const token = rejected && !keyed ? '401' : mark.first
-    const seen = await term.wait(lane.reply ? replied(lane.reply, token) : token, Number(arg('timeout', '20000')))
-    const last = seen && !live ? await term.wait(mark.last, Number(arg('timeout', '20000'))) : undefined
-    if (process.env.SLA_DEBUG) console.error(name, index, turn, 'seen', seen !== undefined, 'last', last !== undefined)
+    const seen = await term.wait(
+      lane.reply ? replied(lane.reply, token) : token,
+      Number(arg('timeout', '20000')),
+    )
+    const last =
+      seen && !live ? await term.wait(mark.last, Number(arg('timeout', '20000'))) : undefined
+    if (process.env.SLA_DEBUG)
+      console.error(name, index, turn, 'seen', seen !== undefined, 'last', last !== undefined)
     await sleep(300)
-    if (process.env.SLA_STREAM) Fs.appendFileSync(process.env.SLA_STREAM, JSON.stringify({ chunks: term.trace().map((entry) => [ms(entry[0], enter), entry[1]]), e2e: ms(seen, enter), index, lane: name, turn, wall }) + '\n')
-    const entries = live ? [] : (await log(url, run)).filter((entry) => !samePrompt || BigInt(entry.arrive_ns) >= enter)
-    if (process.env.SLA_TRACE) Fs.appendFileSync(process.env.SLA_TRACE, JSON.stringify({ enter: String(enter), headers: String(entries.find((entry) => entry.kind !== 'side')?.headers_ns), lane: name, turn }) + '\n')
-    out.push({ index, lane: name, round: index, session: name + '-' + index, build: builds.get(name), match: (model || 'default') + '|' + (samePrompt ? 'same-prompt' : 'lane-prompt') + '|' + (live ? 'live' : 'mock') + '|' + cols + 'x' + rows, ready: ms(ready, started), turn, wall, ...(live ? { e2e: ms(seen, enter) } : derive(entries, enter, seen, last)), ...(seen ? {} : { error: 'no token: ' + term.plain().slice(-300) }) })
+    if (process.env.SLA_STREAM)
+      Fs.appendFileSync(
+        process.env.SLA_STREAM,
+        JSON.stringify({
+          chunks: term.trace().map((entry) => [ms(entry[0], enter), entry[1]]),
+          e2e: ms(seen, enter),
+          index,
+          lane: name,
+          turn,
+          wall,
+        }) + '\n',
+      )
+    const entries = live
+      ? []
+      : (await log(url, run)).filter((entry) => !samePrompt || BigInt(entry.arrive_ns) >= enter)
+    if (process.env.SLA_TRACE)
+      Fs.appendFileSync(
+        process.env.SLA_TRACE,
+        JSON.stringify({
+          enter: String(enter),
+          headers: String(entries.find((entry) => entry.kind !== 'side')?.headers_ns),
+          lane: name,
+          turn,
+        }) + '\n',
+      )
+    out.push({
+      index,
+      lane: name,
+      round: index,
+      session: name + '-' + index,
+      build: builds.get(name),
+      match:
+        (model || 'default') +
+        '|' +
+        (samePrompt ? 'same-prompt' : 'lane-prompt') +
+        '|' +
+        (live ? 'live' : 'mock') +
+        '|' +
+        cols +
+        'x' +
+        rows,
+      ready: ms(ready, started),
+      turn,
+      wall,
+      ...(live ? { e2e: ms(seen, enter) } : derive(entries, enter, seen, last)),
+      ...(seen ? {} : { error: 'no token: ' + term.plain().slice(-300) }),
+    })
     await sleep(live ? 3000 : 500)
   }
   term.kill()
   return out
 }
 
-async function resumeSample(name: string, lane: Lane, url: string, index: number): Promise<Sample[]> {
+async function resumeSample(
+  name: string,
+  lane: Lane,
+  url: string,
+  index: number,
+): Promise<Sample[]> {
   const home = Path.join(work, name + '-' + index)
   const cwd = Path.join(work, 'ws-' + name + '-' + index)
   Fs.rmSync(home, { force: true, recursive: true })
@@ -338,9 +605,16 @@ async function resumeSample(name: string, lane: Lane, url: string, index: number
     return [{ error: 'not ready: ' + first.plain().slice(-300), index, lane: name }]
   }
   await sleep(settle)
-  const run = name.replace(/[^A-Za-z0-9]/g, '-') + '-' + index + '-resume-' + String(Math.random()).slice(2, 8)
+  const run =
+    name.replace(/[^A-Za-z0-9]/g, '-') +
+    '-' +
+    index +
+    '-resume-' +
+    String(Math.random()).slice(2, 8)
   const mark = marks(1)
-  first.write('Reply SLA[run=' + run + ',turn=1,tokens=' + tokens + ',rate=' + rate + ',ttft=0,tool=0]')
+  first.write(
+    'Reply SLA[run=' + run + ',turn=1,tokens=' + tokens + ',rate=' + rate + ',ttft=0,tool=0]',
+  )
   await sleep(200)
   first.write('\r')
   if (!(await first.wait(mark.first, 20000))) {
@@ -360,7 +634,17 @@ async function resumeSample(name: string, lane: Lane, url: string, index: number
     else await sleep(50)
   }
   second.kill()
-  return [{ index, lane: name, ready: ms(ready, killed), restored: ms(restored, killed), resumed_request: ms(resumed, killed), turn: 1, ...(restored ? {} : { error: 'transcript not restored: ' + second.plain().slice(-300) }) }]
+  return [
+    {
+      index,
+      lane: name,
+      ready: ms(ready, killed),
+      restored: ms(restored, killed),
+      resumed_request: ms(resumed, killed),
+      turn: 1,
+      ...(restored ? {} : { error: 'transcript not restored: ' + second.plain().slice(-300) }),
+    },
+  ]
 }
 
 async function execSample(name: string, lane: Lane, url: string, index: number): Promise<Sample[]> {
@@ -370,11 +654,30 @@ async function execSample(name: string, lane: Lane, url: string, index: number):
   Fs.mkdirSync(home, { recursive: true })
   Fs.mkdirSync(cwd, { recursive: true })
   lane.setup?.(home, cwd)
-  const run = name.replace(/[^A-Za-z0-9]/g, '-') + '-' + index + '-exec-' + String(Math.random()).slice(2, 8)
+  const run =
+    name.replace(/[^A-Za-z0-9]/g, '-') + '-' + index + '-exec-' + String(Math.random()).slice(2, 8)
   const mark = marks(1)
-  const command = lane.exec!(home, url, 'Reply SLA[run=' + run + ',turn=1,tokens=' + tokens + ',rate=' + rate + ',ttft=' + ttft + ',tool=' + tool + ']')
+  const command = lane.exec!(
+    home,
+    url,
+    'Reply SLA[run=' +
+      run +
+      ',turn=1,tokens=' +
+      tokens +
+      ',rate=' +
+      rate +
+      ',ttft=' +
+      ttft +
+      ',tool=' +
+      tool +
+      ']',
+  )
   const enter = now()
-  const child = ChildProcess.spawn(command[0]!, command.slice(1), { cwd, env: lane.env(home, url), stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = ChildProcess.spawn(command[0]!, command.slice(1), {
+    cwd,
+    env: lane.env(home, url),
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
   let seen: bigint | undefined
   let last: bigint | undefined
   let text = ''
@@ -387,7 +690,16 @@ async function execSample(name: string, lane: Lane, url: string, index: number):
   let stderr = ''
   child.stderr.on('data', (data: Buffer) => (stderr = (stderr + data.toString()).slice(-2000)))
   const exit = await new Promise<bigint>((resolve) => child.on('exit', () => resolve(now())))
-  return [{ exit: ms(exit, enter), index, lane: name, turn: 1, ...derive(await log(url, run), enter, seen, last), ...(seen ? {} : { error: 'no token: ' + stderr.slice(-400) + text.slice(-200) }) }]
+  return [
+    {
+      exit: ms(exit, enter),
+      index,
+      lane: name,
+      turn: 1,
+      ...derive(await log(url, run), enter, seen, last),
+      ...(seen ? {} : { error: 'no token: ' + stderr.slice(-400) + text.slice(-200) }),
+    },
+  ]
 }
 
 const pct = (values: number[], p: number) => {
@@ -396,11 +708,16 @@ const pct = (values: number[], p: number) => {
 }
 
 const names = arg('lanes', 'nc,claude,codex').split(',')
-const builds = new Map(names.map((name) => {
-  const bin = laneOf(name).tui(Path.join(work, 'version'), '')[0]!
-  const version = ChildProcess.spawnSync(bin, ['--version'], { encoding: 'utf8', env: { ...process.env, HOME: Path.join(work, 'version') } })
-  return [name, (version.stdout ?? '').trim().split('\n')[0] || 'unknown']
-}))
+const builds = new Map(
+  names.map((name) => {
+    const bin = laneOf(name).tui(Path.join(work, 'version'), '')[0]!
+    const version = ChildProcess.spawnSync(bin, ['--version'], {
+      encoding: 'utf8',
+      env: { ...process.env, HOME: Path.join(work, 'version') },
+    })
+    return [name, (version.stdout ?? '').trim().split('\n')[0] || 'unknown']
+  }),
+)
 const fx = live ? { child: { kill: () => true }, url: '' } : await fixture()
 const all: Sample[] = []
 Fs.mkdirSync(root, { recursive: true })
@@ -408,21 +725,51 @@ const offset = Number(arg('offset', '0'))
 for (let index = offset; index < offset + samples; index++) {
   for (const name of index % 2 === 0 ? names : [...names].reverse()) {
     const lane = laneOf(name)
-    const result = mode === 'exec' ? await execSample(name, lane, fx.url, index) : mode === 'resume' ? await resumeSample(name, lane, fx.url, index) : await tuiSample(name, lane, fx.url, index)
+    const result =
+      mode === 'exec'
+        ? await execSample(name, lane, fx.url, index)
+        : mode === 'resume'
+          ? await resumeSample(name, lane, fx.url, index)
+          : await tuiSample(name, lane, fx.url, index)
     all.push(...result)
-    for (const sample of result) Fs.appendFileSync(Path.join(root, label + '.jsonl'), JSON.stringify(sample) + '\n')
+    for (const sample of result)
+      Fs.appendFileSync(Path.join(root, label + '.jsonl'), JSON.stringify(sample) + '\n')
     for (const sample of result) if (sample.error) console.error(name, index, sample.error)
   }
 }
 fx.child.kill()
 
-const metrics = ['e2e', 'request_out', 'render', 'overhead', 'tool_rt', 'rendered_tps', 'provider_tps', 'tail', 'ready', 'restored', 'resumed_request', 'exit', 'conn_age', 'request_bytes']
-const lines = ['# ' + label + ' (' + samples + ' samples, ' + new Date().toISOString() + ')', '', '| lane | turn | n | ' + metrics.map((m) => m + ' p50 / p99').join(' | ') + ' |', '|' + ' --- |'.repeat(metrics.length + 3)]
+const metrics = [
+  'e2e',
+  'request_out',
+  'render',
+  'overhead',
+  'tool_rt',
+  'rendered_tps',
+  'provider_tps',
+  'tail',
+  'ready',
+  'restored',
+  'resumed_request',
+  'exit',
+  'conn_age',
+  'request_bytes',
+]
+const lines = [
+  '# ' + label + ' (' + samples + ' samples, ' + new Date().toISOString() + ')',
+  '',
+  '| lane | turn | n | ' + metrics.map((m) => m + ' p50 / p99').join(' | ') + ' |',
+  '|' + ' --- |'.repeat(metrics.length + 3),
+]
 for (const name of names) {
   for (let turn = 1; turn <= (mode === 'tui' ? turns : 1); turn++) {
-    const rows = all.filter((sample) => sample.lane === name && sample.turn === turn && !sample.error)
+    const rows = all.filter(
+      (sample) => sample.lane === name && sample.turn === turn && !sample.error,
+    )
     const cells = metrics.map((metric) => {
-      const values = rows.map((row) => row[metric]).filter((value): value is number => typeof value === 'number')
+      const values = rows
+        .map((row) => row[metric])
+        .filter((value): value is number => typeof value === 'number')
       if (!values.length) return '-'
       const digits = metric.endsWith('tps') || metric === 'request_bytes' ? 0 : 2
       return pct(values, 50)!.toFixed(digits) + ' / ' + pct(values, 99)!.toFixed(digits)

@@ -42,6 +42,13 @@ const MKDIR: u32 = 4;
 const REMOVE: u32 = 5;
 const RENAME: u32 = 6;
 const READ_AT: u32 = 7;
+const SET_MODE: u32 = 8;
+const SET_MTIME: u32 = 9;
+const LSTAT: u32 = 10;
+const SYMLINK: u32 = 11;
+const READ_LINK: u32 = 12;
+const HARD_LINK: u32 = 13;
+const LINKS: u32 = 14;
 
 thread_local! {
     static INPUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
@@ -116,28 +123,66 @@ fn call(op: u32, path: &[u8], data: &[u8], arg: u64) -> io::Result<Vec<u8>> {
     }))
 }
 
+/// One entry's stat as the host replies it; LSTAT does not follow a final symlink.
+fn stat(op: u32, path: &[u8]) -> io::Result<Stat> {
+    let reply = call(op, path, &[], 0)?;
+    let mut reader = Reader(&reply);
+    let kind = match reader.u32() {
+        1 => Kind::Dir,
+        2 => Kind::Symlink,
+        _ => Kind::File,
+    };
+    let mode = reader.u32();
+    let size = reader.u64();
+    let mtime_ns = reader.u64().cast_signed();
+    Ok(Stat {
+        kind,
+        size,
+        mode,
+        mtime_ns,
+    })
+}
+
 struct Shell {
     spawns: bool,
 }
 
 impl Files for Shell {
     fn stat(&self, path: &[u8]) -> io::Result<Stat> {
-        let reply = call(STAT, path, &[], 0)?;
+        stat(STAT, path)
+    }
+
+    fn lstat(&self, path: &[u8]) -> io::Result<Stat> {
+        stat(LSTAT, path)
+    }
+
+    fn set_mode(&self, path: &[u8], mode: u32) -> io::Result<()> {
+        call(SET_MODE, path, &[], u64::from(mode)).map(drop)
+    }
+
+    fn set_mtime(&self, path: &[u8], mtime_ns: i64) -> io::Result<()> {
+        call(SET_MTIME, path, &[], mtime_ns.cast_unsigned()).map(drop)
+    }
+
+    fn symlink(&self, target: &[u8], link: &[u8]) -> io::Result<()> {
+        call(SYMLINK, link, target, 0).map(drop)
+    }
+
+    fn read_link(&self, path: &[u8]) -> io::Result<Vec<u8>> {
+        call(READ_LINK, path, &[], 0)
+    }
+
+    fn hard_link(&self, existing: &[u8], link: &[u8]) -> io::Result<()> {
+        call(HARD_LINK, existing, link, 0).map(drop)
+    }
+
+    fn links(&self, path: &[u8], follow: bool) -> Option<(u64, u64)> {
+        let reply = call(LINKS, path, &[], u64::from(follow)).ok()?;
+        if reply.len() < 16 {
+            return None;
+        }
         let mut reader = Reader(&reply);
-        let kind = match reader.u32() {
-            1 => Kind::Dir,
-            2 => Kind::Symlink,
-            _ => Kind::File,
-        };
-        let mode = reader.u32();
-        let size = reader.u64();
-        let mtime_ns = reader.u64().cast_signed();
-        Ok(Stat {
-            kind,
-            size,
-            mode,
-            mtime_ns,
-        })
+        Some((reader.u64(), reader.u64()))
     }
 
     fn read(&self, path: &[u8], limit: u64) -> io::Result<Vec<u8>> {
@@ -296,7 +341,14 @@ fn request(input: &[u8]) -> (Run, Shell) {
     (run, shell)
 }
 
-fn respond(ended: &Ended, stdout: &[u8], stderr: &[u8], steps: u64, held: Held) -> Vec<u8> {
+fn respond(
+    ended: &Ended,
+    stdout: &[u8],
+    stderr: &[u8],
+    order: &[(u8, usize)],
+    steps: u64,
+    held: Held,
+) -> Vec<u8> {
     let mut out = Vec::with_capacity(stdout.len() + stderr.len() + 64);
     let (tag, value) = match ended {
         Ended::Exited(code) => (0, code.cast_unsigned()),
@@ -336,6 +388,11 @@ fn respond(ended: &Ended, stdout: &[u8], stderr: &[u8], steps: u64, held: Held) 
             Why::Machine => 1,
         }));
         put(&mut out, missing.to_string().as_bytes());
+    }
+    out.extend_from_slice(&u32::try_from(order.len()).unwrap_or(u32::MAX).to_le_bytes());
+    for &(fd, len) in order {
+        out.extend_from_slice(&u32::from(fd).to_le_bytes());
+        out.extend_from_slice(&u32::try_from(len).unwrap_or(u32::MAX).to_le_bytes());
     }
     out
 }
@@ -385,12 +442,12 @@ pub extern "C" fn python_run() -> usize {
                 Ok(python) => kept.insert(python),
                 Err(error) => {
                     let said = format!("python3: cannot start: {error}\n");
-                    return respond(&Ended::Exited(1), &[], said.as_bytes(), 0, Held::default());
+                    return respond(&Ended::Exited(1), &[], said.as_bytes(), &[], 0, Held::default());
                 }
             },
         };
         let ran = python.run(run, Rc::new(shell));
-        respond(&ran.ended, &ran.stdout, &ran.stderr, ran.steps, ran.held)
+        respond(&ran.ended, &ran.stdout, &ran.stderr, &ran.order, ran.steps, ran.held)
     });
     let len = out.len();
     OUTPUT.set(out);

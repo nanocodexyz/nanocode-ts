@@ -1,0 +1,141 @@
+name: Full suite
+run-name: Full suite ${{ inputs.source_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Confirmed master commit to test (full SHA)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: full-suite-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Exact WASM and PostgreSQL
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write # Secure runner policy identity
+    defaults:
+      run:
+        shell: bash
+        working-directory: nanocode-ts
+    env:
+      CARGO_BUILD_JOBS: '4'
+      DATABASE_URL: postgres://postgres@127.0.0.1/postgres
+      EXPECTED_SHA: ${{ inputs.source_sha }}
+      SHIPPY_REMOTE_BUILD: '0'
+    services:
+      postgres:
+        image: postgres:16@sha256:3950ad7c3148ca2175ef1b6c36c9efbf78957ae8fbe8b3a5d7c35af50500382f
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@ed19c99c6a586f683c3cc2d20684788d450f4fce
+      - name: Require Aegis service
+        working-directory: ${{ github.workspace }}
+        run: systemctl is-active --quiet aegis
+      - name: Check out dispatched source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: nanocode-ts
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+      - name: Require confirmed master and SDK pin
+        id: source
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git ls-remote origin refs/heads/master | cut -f1)" = "$GITHUB_SHA"
+          sdk=$(jq -r .revision sdk-revision.json)
+          [[ "$sdk" =~ ^[0-9a-f]{40}$ ]]
+          echo "sdk=$sdk" >> "$GITHUB_OUTPUT"
+      - name: Check out exact SDK
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: nanocodex
+          persist-credentials: false
+          ref: ${{ steps.source.outputs.sdk }}
+          repository: nanocodexyz/nanocode
+      - name: Acquire dependencies and toolchain
+        run: |
+          set -euo pipefail
+          test "$(git -C ../nanocodex rev-parse HEAD)" = "$(jq -r .revision sdk-revision.json)"
+          npm ci --ignore-scripts
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal --target wasm32-unknown-unknown
+          rustc --version --verbose
+          clang --version
+          clang --print-targets | grep wasm32
+          CARGO_NET_OFFLINE=false cargo fetch --locked
+      - name: Build exact module without network access
+        run: |
+          set -euo pipefail
+          forwarded=()
+          for variable in RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER; do
+            if [[ -v "$variable" ]]; then
+              forwarded+=("$variable=${!variable}")
+            fi
+          done
+          sudo unshare --net -- runuser -u "$(id -un)" -- env "${forwarded[@]}" \
+            "PATH=$PATH" \
+            "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" \
+            "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" \
+            SHIPPY_REMOTE_BUILD=0 CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 \
+            cargo build --locked --offline --lib --target wasm32-unknown-unknown --profile wasm -j4
+      - name: Record module-only test receipt
+        run: |
+          set -euo pipefail
+          mkdir -p dist output/ci
+          cp target/wasm32-unknown-unknown/wasm/nanocode_wasm.wasm dist/nanocode_wasm.wasm
+          node --input-type=module <<'NODE'
+          import * as Fs from 'node:fs'
+          import * as Wasm from './scripts/wasm.mjs'
+          const receipt = {
+            files: { 'nanocode_wasm.wasm': Wasm.sha256(Fs.readFileSync('dist/nanocode_wasm.wasm')) },
+            fingerprint: Wasm.fingerprint(),
+            network: 'Rust build executed in an isolated Linux network namespace',
+            scope: 'module-only Board tests, not a complete WASM release',
+            sdkRevision: JSON.parse(Fs.readFileSync('sdk-revision.json', 'utf8')).revision,
+            tsRevision: process.env.GITHUB_SHA,
+          }
+          Fs.writeFileSync('output/ci/test-wasm.json', JSON.stringify(receipt, null, 2) + '\n')
+          NODE
+      - name: Check types and run the full suite
+        env:
+          NANOCODE_TEST_WASM_RECEIPT: ${{ github.workspace }}/nanocode-ts/output/ci/test-wasm.json
+        run: |
+          set -euo pipefail
+          npm run check:types
+          npm test 2>&1 | tee output/ci/full-suite.log
+      - name: Upload test receipt and log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          if-no-files-found: error
+          name: full-suite-${{ github.sha }}
+          path: nanocode-ts/output/ci

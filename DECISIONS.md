@@ -1,5 +1,7 @@
 # Decisions
 
+- feat(wasm): provider 'antigravity' opens Gemini sessions on the SDK's Antigravity harness, adopting nanocode d16fb837b (2026-11-20, antigravity lane). Why: nanocode added the Antigravity harness for Gemini models (gemini-4-neon), and TS hosts could only pick claude or codex. What: `ModelProvider` gains 'antigravity' (the SDK family id, as the CLI's --harness antigravity), and `config.google` chooses the route: `auth: 'api_key'` (Gemini API, endpoint defaults to https://generativelanguage.googleapis.com), `'vertex'` with `project` (required) and `location` (default global), `'vertex_express'`, or `'gateway'` (endpoint is the gateway's base URL). The bridge gives the harness Auth::None and the host's dispatch() adds the credential (x-goog-api-key, a Vertex access token or express key), as for the other providers. Requests arrive as provider 'antigravity' on the native Gemini wire (`/v1beta/models/<model>:streamGenerateContent?alt=sse`), and the harness keeps its own Antigravity prompts and tools. There is no plan or subscription sign-in for Google: Google's terms bar third-party tools from the Antigravity/Gemini CLI consumer OAuth, so `subscription: true` and `config.gateway` are refused for this provider and Plans.serves is false for it. No Vercel AI Gateway, Workers AI or Cloudflare AI Gateway mapping was added, because none was confirmed to serve generateContent. Per-provider tool overrides (providers, web_search, workspace_tools, hand_tools) stay claude/codex only (`ToolProvider`). The Cloudflare gateway forwards accept, content-type, x-goog-api-client and x-goog-user-project for it. The SDK pin moves from dde42efe8 to d16fb837b, which includes 27de92f99 and runs the harness on wasm with the host's sender, files and shell (57acc8cae), opens store-backed sessions under their stored id, makes file tools accept rooted paths on wasm32-unknown-unknown, and registers an antigravity.v1 checkpoint format. Checked: `npm run check:types`; `SHIPPY_REMOTE_BUILD=0 npm run build`; `node --experimental-strip-types output/antigravity-mock.ts` opens an antigravity session against a mock Gemini endpoint and runs one turn: the model calls read_file with thoughtSignature sig-abc-123, and the second request echoes the signature on the functionCall part and returns the file's contents in functionResponse. The turn completes with the model's final text.
+
 - feat(client): tool cells keep the tool's structured result as `Cell.structured` (2026-11-19). Why: a host that renders a tool's result as UI needs its structured data, and the cell kept only `output` text and images. For an MCP tool, the SDK's `structured_result` is the whole `CallToolResult`, so `structured.structuredContent` and `structured._meta` reach the page. tempo.com-exp's composer renders `/mcp` tool results as blocks from it. Checked on 2026-11-19 against a local `durable-cloudflare`-shaped Worker on build-5e453e5 with an MCP server: the `tool.result` event of `mcp__tempo__feedback` carried `structured_result: { content, structuredContent: { status: 'saved' } }`, which `Tool.finish` read and then dropped.
 
 - Explicit Python host capability and caught-operation diagnostics (2026-11-18). Python.Options.unavailable and Cloudflare workspace.pythonUnavailable reject python/python3/pip/pip3/uv with exit 126 before loading a module, data, files or interpreter. This is an explicit unsupported capability, not a smaller workload, import heuristic or silent fallback. The offline harness invokes all five commands and observes zero dependency/module touches; all three TypeScript configurations pass. Node remains unchanged unless a host selects this option. Native Workers tail reproduced an older demo pooled session failing both turn submissions with inner 503 and outer SSE HTTP 200, with no logged exception; read-only reports are 404 and events empty. The SDK catch now logs object id, operation and stack internally while preserving the public generic 503 and never replaying a turn. A live fix is not claimed until a diagnostic deployment and rerun establish the cause.
@@ -1053,3 +1055,203 @@ The source fix, exact case list and pass predicate are separate from image selec
 The retained Polars pair remains explicit rather than universal. The normal artifact fingerprint omits its optional build tree, and its stronger retained packaging scripts are not integrated into the current build. Fresh Node workloads under an interpreter memory policy do not verify a Cloudflare isolate memory cap. Changing default filenames would neither establish reproducible source builds nor qualify constrained hosts. No new WASM artifact or release is claimed.
 
 Local gates passed: `npm run check:types`, `npm run build:ts`, focused `vp fmt --check` and `vp lint`, strict standalone TypeScript checking of `bench/python/requirements.ts`, and `git diff --check`. `SHIPPY_REMOTE_BUILD=0 node scripts/check-patches.ts ../tb-failure-fixes` still passes all 16 core patch regressions and catches five mutations. `unshare -Urn node bench/sandbox/bytes.ts` still passes 54 adapter cases. No CI workflow, model request, paid benchmark or wallet operation ran. The historical Terminal-Bench result remains 19/25. The two patch defects affecting three tool-primary or tool-confounded failed attempts were already fixed in core `664f49e`; this audit found no additional demonstrated TB production defect. All task-level improvements still require a paid rerun. Prose-model lint was omitted to preserve offline execution.
+
+## 2026-11-18 PST: current SDK patch semantics
+
+The SDK pin advances from `664f49e0449e4793d19a8003a6ab27cb4c966b36` to `7ca429cbad4fedf6fae60beb30c9b83f63e6b4de`. Python and shell source pins remain unchanged. The new pin retains ordered file replacement and byte-preserving updates, and rejects patch heredocs whose unquoted shell expansion cannot be preserved by interception.
+
+On hosted Linux, three network-denied repeats passed 16/16 patch cases and caught five mutations per repeat. Three heredoc repeats passed 15/15 cases and caught two mutations per repeat. Observed count ranges were 16–16 and 15–15, not population confidence intervals. Exact commands from this checkout were `RUSTUP_TOOLCHAIN=1.99.0 SHIPPY_REMOTE_BUILD=0 unshare -Urn node scripts/check-patches.ts ../harness-climb-new/nanocode` and `RUSTUP_TOOLCHAIN=1.99.0 SHIPPY_REMOTE_BUILD=0 unshare -Urn python3 ../harness-climb-new/nanocode/bin/nanocode-sim/heredocs.py --mutations`, repeated three times. An initial heredoc check without the explicit installed toolchain failed when rustup attempted network access inside the denied namespace. It is retained separately and is not a passing run. These extracted Rust checks use installed Rust 1.99.0, not a claim that the release WASM compiled with that version.
+
+`SHIPPY_REMOTE_BUILD=0 unshare -Urn npm run check:types` passes all three configurations. The historical Terminal-Bench result remains 19/25. Saved trajectories contain six failed attempts across three tasks. Two existing patch defects explain three tool-primary or tool-confounded attempts; the other three are model-primary. No new paid trial ran, and no task-level recovery is claimed. New WASM compilation and release qualification are separate gates.
+
+## 2026-11-19: Opt-in Tool Repair
+
+The `tool_repair` option now reaches `ClaudeBuilder::tool_repair` through the TypeScript configuration, Cloudflare session descriptor and WASM bridge. The SDK pin remains `7ca429cbad4fedf6fae60beb30c9b83f63e6b4de`, which contains upstream change `486ffa52476b62b0c70e13bfef3a72bf41f168fa`. Shell and Python pins, lockfiles and release scripts remain unchanged. Omission and explicit `false` retain the previous behavior.
+
+Validation used hosted Linux, Node 24.22.3 and the pinned Rust 1.97.1 toolchain. `npm run check:types`, `npm run build:ts`, `SHIPPY_REMOTE_BUILD=0 cargo clippy --locked --all-targets --target wasm32-unknown-unknown -- -D warnings`, `SHIPPY_REMOTE_BUILD=0 cargo build --locked --lib --target wasm32-unknown-unknown`, focused Rust formatting and `git diff --check` passed. The network-denied harness `unshare -Urn node output/tool-repair-smoke.ts` passed three cases against the compiled WASM: omission, explicit `false` and explicit `true`. Each case used two local mock responses. A failed exec cell retained its ReferenceError in all cases and received the repair hint only with explicit `true`.
+
+Full-tree formatting still reports existing formatting in `src/wasm/remote.rs` and `src/cloudflare/App.ts`. Focused TypeScript lint reports six existing warnings and no errors. Those unrelated lines remain unchanged. No provider request, paid benchmark or release publication ran. The local WASM build and mocked behavior do not qualify a release artifact or establish task-level performance gains.
+
+## 2026-11-20: Board in a Cloudflare Durable Object
+
+`test/board-cloudflare.test.ts` runs the Board binding the way swarms does: `test/board-cloudflare.worker.ts` opens `Board.open` over `nanocode-ts/cloudflare`'s `Sql.create(ctx.storage)` in a SQLite-backed Durable Object, one Board handle per actor in the same object. The test bundles that worker with rolldown and serves it with workerd. It covers post (with an idempotency key), claim, Held, renew, steer, the Steer rejection on finish, heed and finish across two handles. It also checks a restart two ways: `ctx.abort()` makes a new instance over the same storage, and a new workerd process reopens the same storage directory. Both resume held claims, keyed posts and unheeded steers. A lease of 600 ms lapses on the wall clock and the other handle takes it over (`tookOver`), after which the old holder gets NotHolder.
+
+The repository had no workerd test setup, so `workerd` (1.20261120.1) and `rolldown` (1.2.15) are now exact dev dependencies. rolldown was already in the lockfile through vite-plus. workerd is the smallest runtime that has Durable Object SQL storage. miniflare and wrangler would each bring workerd plus their own dependency trees, and vitest-pool-workers would add vitest. The test writes a workerd config with `durableObjectStorage = (localDisk)` and `enableSql = true`, reads the bound port from `--control-fd`, and embeds the bundle's chunks and `dist/nanocode_wasm.wasm` as modules, so it needs `npm run build:ts` and the board WASM in `dist`. `npm test` picks it up through `test/board*.test.ts`.
+
+Validation on Linux with Node 26.13.1 against `nanocode_wasm.wasm` built from source at the pinned SDK revision: the 3 tests passed 5 runs in a row, and `npm test` passed 19/19. Changing the built `cloudflare/Sql.js` to drop each statement's first row failed all 3 tests. No bug was found in `src/cloudflare/Sql.ts`, so it is unchanged.
+## 2026-11-20: Board.pool
+
+`Board.pool(board, options)` is a worker pool over a board. It mirrors nanocode's Dispatcher and SubagentPool: up to `concurrency` runs, each holding a claim on one task, with `run(task, lease)` returning `{ done }` or `{ failed }`. The module is `src/BoardPool.ts`, which re-exports `Board.ts`, and `Board` on the root, `nanocode-ts/node` and `nanocode-ts/vercel` entries points at it, so `Board.pool` is on all three. The vercel entry had still pointed at `Board.ts`.
+
+The pool polls again as soon as a run ends instead of waiting for the next `pollMs` tick. Each claim renews every `leaseMs / 3`, so two renewals can fail before the lease lapses. Before it finishes a task, the pool heeds every steer the run has not heeded, because the board rejects a finish while a steer is unheeded; a steer that arrives during the finish is heeded and the finish retried. A lost lease (NotHolder, Held or Terminal from renew, heed or finish) finishes nothing: the run's `lease.signal` aborts and the outcome is dropped, counted as `lost`. A finish that throws is also counted as lost and is not replayed, since whether it landed is unknown and a replay could finish work twice.
+
+`stop()` aborts every run's signal, releases each claim and waits for every run to settle, so a run that ignores `lease.signal` delays `stop()` until it returns. `idleMs` retires the pool, state `retired`, once nothing has run or been claimed for that long; without it the pool polls until stopped. `leaseMs`, `pollMs` and `concurrency` come from the host and have no defaults.
+
+This change moves one re-export and adds this entry. It adds no behavior beyond 9e8c9a3, and no new test. Validation is recorded with the commit: `npm ci`, `npm run check:types` and `npm test` on a shared build box.
+
+## Board.pool takes a claim cap
+
+`PoolOptions.cap` is passed to `board.claim`: a fixed `{ max }` cap, a label cap `{ max, label: [key, value] }` that applies only to tasks carrying that label (other tasks claim without a cap), or a function of the task that returns either or `undefined`. The board counts live leases on the labelled tasks across every pool, so two pools with `{ max: 2, label: ['kind', 'agent'] }` hold at most two kind=agent tasks between them while untagged tasks keep flowing. examples/board-agents passes the cap directly instead of wrapping `claim`. The pool's timers are typed `ReturnType<typeof setInterval>`/`setTimeout` and `clearTimeout` is guarded, so `src/BoardPool.ts` type-checks under `@cloudflare/workers-types` as well as Node, and examples/board-durable-object/tsconfig.worker.json now checks the worker against `src` rather than `dist`. Validation on a shared build box with Node 22: `npm ci --ignore-scripts` with the `wasm-484dc242fbbbeb043262` assets (no `wasm-3f8be537c8b1285e272f` release exists yet; the fingerprint differs only by `scripts/python.mjs`), `npm run build:ts`, `vp check` (0 errors), `npm run check:types`, `npm test` 31/31, and both board examples.
+
+## Board on Postgres
+
+`nanocode-ts/postgres` (`src/postgres/`) is a `Contracts.SqlHost` over postgres.js, so workers on several machines share one board through one Postgres database. `Sql.open(url, { schema, max, valueLimit })` opens a connection pool; `schema` sets every connection's `search_path` (quoted, so a mixed-case name is used as written) and creates the schema if missing. The entry also re-exports `Board` from `BoardPool.ts`, as `nanocode-ts/node` does. postgres.js 4.1.1 is an optional peer dependency (and an exact dev dependency for the tests); it has no dependencies of its own, where node-postgres brings pg-pool, pg-protocol, pg-types and pgpass.
+
+Path (a), a host that translates, rather than (b), routing to nanocode's own Postgres dialect. The SqlHost contract is not SQLite-only: it carries statements as `[sql, ...values]` with `SqlValue` text, numbers, null and `ArrayBuffer` BLOBs, and a transaction per call, and allows an async result. Only the SQL text is SQLite's, because `WorkerStore` (`src/wasm/store.rs`) leaves `Sql::dialect` at its SQLite default, so nanocode's `SqlLog` picks the SQLite half of each statement pair. The Board touches one table, `nanocode_log`, through eight fixed statements, and nanocode already ships the Postgres twin of each beside it (`crates/core/turnlog/src/host.rs`). One is `SqlLog`'s prepare lock: it creates the table and index once per log in a write transaction that starts with `SELECT NULL` on SQLite and `pg_advisory_xact_lock(7061636193)` on Postgres, so processes that first load a fresh schema at once do not race in `CREATE TABLE IF NOT EXISTS`. The host maps those eight by exact text to nanocode's twins (with `::text` casts on the parameters, since postgres.js sends untyped text), numbers the `?N` placeholders of any other statement as `$N`, and throws on SQLite-only syntax it has no twin for (WITHOUT ROWID, INDEXED BY, AS BLOB, PRAGMA, INSERT OR), rather than run something different. Path (b) would need a dialect flag through `WorkerStore` and `board.rs`, a new WASM build and release, and would still need this host to run the statements; it is the right change once the store emits more than the log's statements, and then this table shrinks to the placeholder rewrite.
+
+Transactions match nanocode's own Postgres store: writes are READ COMMITTED, with `SqlLog`'s primary key `(scope, seq)` fencing an append and `WHERE seq = n` fencing an extend, so a lost append race fails its whole transaction with a unique violation (23505), which the log retries, as SQLite's constraint error does. Reads run in one REPEATABLE READ, READ ONLY snapshot. Schema transactions take `pg_advisory_xact_lock(hashtext('nanocode-ts/postgres schema'))` first, since two connections running `CREATE TABLE IF NOT EXISTS` at once otherwise race on `pg_type`. BLOBs bind as `bytea` and read back as `ArrayBuffer`; BIGINT reads back as a number when it is safe and as text otherwise.
+
+`test/board.test.ts` runs on Postgres when `NC_BOARD_POSTGRES` holds a URL: each board path becomes a schema of its own, dropped afterwards, and its child processes inherit the variable. `test/board-postgres.test.ts` sets it from `DATABASE_URL` and imports that suite, checks the translation table, and runs two cross-process cases with `test/board-postgres.child.ts`, each process on its own pool: a process claims a task with a 1.5 s lease and is killed with SIGKILL, and a second process takes it over (`tookOver`) only once the lease lapsed and finishes it, after which the dead claim cannot finish it again; and two processes race to claim the same 12 tasks, every task won by exactly one. Without `DATABASE_URL` the Postgres tests skip and only the translation checks run.
+
+`npm run bench:board -- --sql postgres` runs `bench/board-load.ts` against `DATABASE_URL`, one fresh schema per cell, dropped after its audit; workers open pools of 2. The worker counts Postgres 40001, 40P01 and 55P03 as busy and 23505 as a constraint failure.
+
+Measured on one 8-core lease of an AMD EPYC 9254 host, 8 workers, default flags, Postgres 16 on loopback with default settings, SQLite on the same host for comparison; every cell had zero violations, and takeovers came at the 3 s lease (p50 2.94 to 3.01 s):
+
+| backend | partitions | claims/s | task p99 | lost append races per 1,000 writes | refresh share of worker time |
+| --- | --- | --- | --- | --- | --- |
+| SQLite | 1 | 669 | 519 ms | 420 | 6.9% |
+| SQLite | 8 | 497 | 1,095 ms | 333 | 36.1% |
+| Postgres | 1 | 454 | 1,275 ms | 747 | 10.7% |
+| Postgres | 8 | 524 | 1,355 ms | 431 | 27.5% |
+
+Postgres does not remove append races: they come from every worker appending at the same log tail, and a write that takes 0.36 ms (p50) instead of SQLite's 0.05 ms widens the window, so one partition loses 75% of its appends and runs a third slower than SQLite on one host. Partitions are what spread the tails, and on Postgres they pay off (454 to 524 claims/s, races 747 to 431 per 1,000) where on one SQLite file they cost more than they give. The gain Postgres brings is that the workers can be on different machines; a board that stays on one host is faster on SQLite.
+
+`Board.pool` takes `wake` (2026-11-20), `(notify) => unsubscribe`: the pool polls as soon as `notify` fires and still every `pollMs`, ignores a wake while all its slots run (a run that ends polls anyway), and unsubscribes when it stops or retires. A subscription rather than a promise or an event emitter, so any transport fits and the pool owns its lifetime. On Postgres the host sends `SELECT pg_notify('nanocode_log', <schema>)` after a committed transaction that ran an INSERT, UPDATE or DELETE on `nanocode_log`, outside that transaction so a lost append race (which rolls back) sends nothing and the writer holds no extra lock, and at most once every `notifyMs` (default 10) per host, so a host sends at most 100 notifications a second whatever its write rate (one per write ran to thousands a second in `bench:board`). The payload is the schema, so boards in different schemas of one database ignore each other's writes. `Sql.wake(host, { debounceMs })` LISTENs through postgres.js's dedicated listen connection and calls `notify` once at the end of each `debounceMs` window (default 5) after a notification; postgres.js listens again after a lost connection and calls `notify` then too, since writes may have landed meanwhile. A host's own writes wake its own pools as well, which is what a process that posts and works through one host needs. node:sqlite has no cross-process notify, so its pools leave `wake` unset; a single-process SQLite board could pass a subscription its own writer fires. `test/board-pool-wake.test.ts` drains 20 tasks with two processes at `pollMs` 5000 in 74 to 80 ms with `wake` and 4,976 to 5,001 ms without; `bench/RESULTS.md` has the `--wake` matrix: at 8 partitions wake cuts task p99 by about a third, and at 1 partition it costs about 15% of claims/s with or without the throttle, since polls woken by other workers' writes add to the races at the one log tail.
+
+## 2026-11-20: the CI and release workflows are kept but dormant; releases are built on a box and published by hand
+
+`.github/workflows/ci.yml` and `.github/workflows/release.yml` stay in the repository, but GitHub Actions is off for nanocodexyz by the owner's choice, so neither runs. AGENTS.md says so, in place of the earlier "There is no CI".
+
+Releases are made by hand today. On a shared build box (under an nc-build lease), from a clean checkout of the pushed master commit, `scripts/release.mjs` removes `dist`, runs `npm ci --ignore-scripts`, builds and uploads the WASM assets with `scripts/build.mjs` and `scripts/publish-wasm.mjs --upload` only when the `wasm-<fingerprint>` release does not exist yet, runs `npm run prepare` and `npm run check:types`, and packs `nanocode-ts-<short>.tgz`. The tarball is then published from a machine with a GitHub token by `gh release create build-<short>` with the title and notes `scripts/release.mjs` writes: title `nanocode-ts <short>`, notes naming the commit, the SDK revision, the WASM build and the two install commands. Each release is checked by sha256 at every hop: box, coordinating machine and the published asset must show the same digest.
+
+Until Actions is turned on, nothing in the workflows is relied on.
+
+## 2026-11-20: npm run check is a no-op on master
+
+`npm run check` (`vp check --fix`, Vite+ 0.2.4) rewrote 8 files on 84b0b60. Every rewrite but one is cosmetic and is applied by hand here: oxfmt reflowed `test/board.test.ts` (the Postgres `describe` re-indented, four long calls wrapped) and `bench/sla/ci.ts`; `eslint(no-useless-escape)` dropped escapes that mean the same thing (`\\[` and `\\-` inside a character class, `\\/` in a range, `'\\${'` in a string) in `src/bash/internal/commands/yaml.ts`, `src/bash/internal/Print.ts`, `bench/sla/fixture.ts` and `bench/sla/run.ts`; `unicorn(prefer-string-starts-ends-with)` turned flagless `/^x/.test(s)` and `/x$/.test(s)` on `string` values into `startsWith` and `endsWith` in `yaml.ts`, `src/vercel/App.ts` and `bench/sla/ci.ts`.
+
+The one rewrite that changes behavior is `unicorn(no-useless-spread)` in `src/bash/internal/commands/jq.ts`: `match`, `test` and `capture` report jq offsets and lengths in code points, `[...input.slice(0, i)].length`, and the fix turns that into `input.slice(0, i).length`, UTF-16 units, so any text with a character outside the BMP before a match shifts every offset. `vite.config.ts` turns that rule off for `jq.ts` with a lint override rather than letting the fix run. The rule's other warnings (`zip.ts`, `Shell.ts`, and the `[...this.paths(...)]` snapshots in `jq.ts`) copy a collection before mutating or awaiting on purpose, and `--fix` does not apply those.
+
+After this change `vp check --fix` leaves `git status` clean. Validation on a shared build box under a test lease, Node 22: `npm ci --ignore-scripts` with the `wasm-484dc242fbbbeb043262` assets in `dist`, `npm run build:ts`, `vp check --fix` then `git status --porcelain` empty, `npm run check:types`, `npm test`, and a jq check that `"😀a" | match("a").offset` stays 1.
+
+## 2026-11-22: Session disposal has explicit terminal phases
+
+`Session.open` represents its lifecycle as `open`, `closing`, or `closed`.
+Closing rejects new leases and hand connections before they dispatch, including leases that await a runtime reopen.
+Repeated disposal returns the same completion promise, including a failed completion, and does not retry disposal.
+A dispatched failure or retry result remains visible and does not replay the prompt.
+Read-only accessors remain available after disposal.
+
+`client/internal/ToolInput` no longer declares or implements `text`, which has no source caller.
+Its streaming `raw`, `fields`, and `arguments` behavior remains unchanged.
+Compared with 25788d1, ToolInput removes 6 lines and 211 bytes.
+Session adds 20 net lines and 673 bytes, for a production total of 14 net lines and 462 bytes added.
+
+Validation used Node 24.22.3 and npm 11.19.1 on Linux with `SHIPPY_REMOTE_BUILD=0`.
+Every check ran under `unshare -Urn`, with OS networking disabled:
+
+- `npm run check:types` and `npm run build:ts` passed.
+- `node_modules/.bin/vp check src/Session.ts src/client/internal/ToolInput.ts test/session-lifecycle.test.ts` passed without fixes.
+- `node --test test/session-lifecycle.test.ts` passed 23 cases against source and the compiled module.
+- A baseline loader made the shared-disposal regression fail on the previous Session implementation, as expected.
+- A parser differential harness compared 18 inputs across 734 chunk partitions and 2659 prefixes, with 7977 matching assertions.
+- `npm test` includes the lifecycle suite and reported 46 passes, 25 failures, 4 cancellations, and 3 skips. Board checks lacked `dist/nanocode_wasm.wasm`. Postgres checks skipped without a database.
+
+The loaders, differential harness, measurements, and logs remain in ignored `output/maintenance`.
+Coverage counters describe those local mock paths only, not full runtime or E2E coverage.
+The WASM build and release paths were not run for this TypeScript increment.
+
+## 2026-11-22: Portable Python Replay Inputs
+
+`bench/python/replay.ts --snapshot` copies retained HTTP responses and an explicit interpreter/shell profile into one directory under `output/`. Its manifest records every file's size and SHA256, the probe matrix hash and the source revision. Snapshot creation validates response keys, request scope and response hashes. It performs no acquisition. `--bundle` verifies the complete file set before WebAssembly compilation, rejects asset-directory overrides and records the manifest hash in each receipt. The original fixture-directory mode remains available.
+
+The retained capture contains 123 responses, with 315951208 response-body bytes. Its portable bundle contains 249 files with 374485189 bytes, excluding the manifest. The manifest SHA256 is `6e4ad6c9f1bfa321c46e15e5162715af118573ede04779eee0ea4122cff5df1f`. The forty ordered probes retain matrix SHA256 `f07bd0eeb6344c76b827deda0984e140963b1214d22e87d71dd476d43917b208`.
+
+The matched standard assets come from release `build-878f938`, commit `878f938275d47cf636242cd65425562cee0961f3`. The retained archive SHA256, `82a4fd83587fb35d4adda62564e64ec113a987541207a25a9ac3fc201bfa2d96`, matches GitHub's release-asset digest. The module, data and shell SHA256 values are respectively `88d86a29f0ef05ad2853e3407ad40ca81935e4331894a18c914e1052adf2789e`, `2f8f41f879b2b938497ff1066736f3ef0abf6c0235bfc4e44c39b5163dbdd894` and `f16e0a60f2a3e2b3f70d34f22a8e2497fba83cd444ae2da04e63312387848773`.
+
+On hosted Linux with Node 24.22.3, the original replay passed 33/40 once. Three fresh, network-denied bundle processes each passed 33/40, with no changed outcome. Seventeen rejection checks passed for changed content, incomplete or duplicate manifests, unlisted files, changed matrices, directory overrides, overwrite attempts and request-scope violations. These are fixed-case counts, not confidence intervals or broader package qualification.
+
+All seven failures occur during installation. The absent compiled-module counts are statsmodels 26, SciPy 106, scikit-learn 69, lxml 7, cryptography 1, PyArrow 38 and polars-runtime-32 1. No package implementation or probe changed. The historical optional Polars image was not recovered, so its previous 34/40 result is not reproduced here. These retained responses are the interrupted capture, not a claim to recover the earlier historical PyPI snapshot.
+
+The bundle remains an explicit local input, not a committed artifact or a published download. A clean checkout needs the retained bundle and installed npm dependencies. From the source checkout, create a new bundle and run three fresh processes as follows:
+
+```sh
+SHIPPY_REMOTE_BUILD=0 unshare -Urn node bench/python/replay.ts --snapshot output/http output/runtime/878f938/package/dist output/python-replay
+for trial in 1 2 3; do
+  SHIPPY_REMOTE_BUILD=0 unshare -Urn node --max-old-space-size=1024 bench/python/replay.ts --bundle output/python-replay "output/trial-$trial.jsonl" || exit
+done
+```
+
+`npm run check:types`, `npm run build:ts`, standalone strict checking of the replay entrypoint with repository compiler options, focused lint/format checks and `git diff --check` passed. Enabling additional `exactOptionalPropertyTypes` and `noUncheckedIndexedAccess` flags reports 1043 errors in unchanged imported source files, not in the replay entrypoint. Those options are absent from this checkout's tsconfig. No Rust build, model request, wallet call or artifact publication ran. Model-based prose lint was omitted because this work excludes model calls.
+
+## 2026-11-22: Full tests require verified local runtime and database inputs
+
+`npm test` validates the local Board WASM fingerprint and SHA256 before it builds TypeScript or starts tests.
+A normal release uses `dist/nanocode-wasm.json`.
+`NANOCODE_TEST_WASM_RECEIPT` selects an explicit local build receipt with the same fingerprint and module digest fields.
+A module-only receipt qualifies only `nanocode_wasm.wasm`, not the seven-file release bundle.
+Tests neither download assets nor build Rust.
+Acquisition remains a separate `node scripts/prepare.mjs` operation or an explicit source build.
+
+The runner checks `DATABASE_URL` when supplied.
+Otherwise it starts a real, temporary PostgreSQL cluster from `PG_BINDIR`, or the directory reported by `pg_config --bindir`.
+The cluster listens only on its private Unix socket and stops after the test process exits, including failure.
+Missing server binaries and an unavailable database fail setup instead of omitting the Postgres checks.
+Node test options precede test paths, so `npm test -- --test-concurrency=2 --test-reporter=tap` applies both options.
+
+The previous 78-case result contained 46 passes, 25 failures, four cancellations, and three database skips.
+Each failure lacked `dist/nanocode_wasm.wasm`.
+The four Cloudflare cases were cancelled by the same absent module in their setup hook.
+No runtime logic defect was demonstrated by those results.
+
+The current source fingerprint is `b395d31a3747a151fc55`, with SDK revision `d16fb837b0b710f446702a21f451a5e1defcdce8`.
+Its published WASM release returned HTTP 404, so no older runtime was substituted.
+An explicit Rust 1.97.1 build used `cargo build --locked --offline --lib --target wasm32-unknown-unknown --profile wasm -j4`.
+It preserved compiler wrappers and used `SHIPPY_REMOTE_BUILD=0`, `CARGO_BUILD_JOBS=4`, and a four-CPU affinity.
+Cargo used offline mode, but the build host refused OS network isolation.
+The module SHA256 is `0516434b77ffd832f624d11fb5c08956d5ace721a8afc9c2d44a0a3e52e4726f` at 34990743 bytes.
+This is the Cargo profile output, without a Binaryen pass or a complete release manifest.
+
+Two full runs each passed 106 tests with zero failures, cancellations, or skips.
+The second run created and stopped its own temporary PostgreSQL cluster.
+It used real PostgreSQL 16.16 and workerd 1.20261120.1, including the existing multiprocess fuzz and restart checks.
+The additional six cases check the fixture guard against the current real module, changed content, missing inputs, and invalid receipts.
+A negative control that removed validation failed five cases, as expected.
+Runtime checks used Node 24.22.3 and npm 11.19.1 in a network namespace with only loopback enabled.
+An external fetch failed in that namespace.
+
+With already acquired local inputs, the full runner needs no network or Rust compiler:
+
+```sh
+NANOCODE_TEST_WASM_RECEIPT=/path/to/module-receipt.json \
+PG_BINDIR=/path/to/postgresql/bin \
+SHIPPY_REMOTE_BUILD=0 npm test -- --test-concurrency=2 --test-reporter=tap
+```
+
+A clean checkout still requires npm dependencies, matching WASM inputs, and PostgreSQL binaries or an explicit test database.
+No new WASM release was published by this change.
+
+## 2026-11-22: Manual full-suite CI builds its exact test module
+
+`full-suite.yml` accepts only a confirmed master SHA and checks out the SDK revision from `sdk-revision.json`.
+The job acquires npm dependencies, Rust 1.97.1, the WASM target, and locked Cargo sources before compilation.
+The compiler runs in a Linux network namespace through `sudo unshare --net`.
+A namespace failure stops the job without a network-enabled fallback.
+Cargo also uses locked offline mode, four jobs, and the existing compiler wrappers.
+
+The job records the module fingerprint, SHA256, source SHA, and SDK revision in a module-only test receipt.
+It runs the unfiltered `npm test` with a real, digest-pinned PostgreSQL 16 service.
+No release bundle, tag, or package is published.
+The manual trigger leaves the existing release and CI workflows unchanged.
+
+All actions use immutable commit pins, checkout credentials are not retained, and repository access is read-only.
+The public secure-runner action receives only its required additional identity permission.
+The Aegis service must be active before source acquisition.
+`actionlint` passed, and `zizmor --offline --persona auditor` reported no findings.
+Twenty-one focused workflow checks passed, including actual OS network denial and wrapper forwarding with a mocked Cargo command.
+That focused check is not a Rust build or an Actions run.
+
+The repository Actions setting returned `enabled: false`.
+The allowed-actions endpoint returned HTTP 409: `GitHub Actions is disabled on this repository by the organization`.
+No organization policy change or workflow dispatch was attempted.
+A real CI run remains blocked by that policy.

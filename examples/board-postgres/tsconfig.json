@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "paths": {
+      "nanocode-ts/postgres": ["../../src/postgres/index.ts"]
+    }
+  },
+  "include": ["index.ts", "worker.ts", "soak.ts"]
+}

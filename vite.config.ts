@@ -26,5 +26,11 @@ export default defineConfig({
       'src/wasm/**',
       'target/**',
     ],
+    overrides: [
+      {
+        files: ['src/bash/internal/commands/jq.ts'],
+        rules: { 'unicorn/no-useless-spread': 'off' },
+      },
+    ],
   },
 })
