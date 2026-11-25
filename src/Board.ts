@@ -55,7 +55,7 @@ export type Rejection = {
 }
 
 export type Verdict =
-  | { ok: true; event: string; seq: number; change: unknown }
+  | { ok: true; event: string; found: boolean; seq: number; change: unknown }
   | { ok: false; rejection: Rejection }
 
 export type Claimed =
@@ -90,6 +90,7 @@ export type Task = {
   phase: Phase
   stage: Stage
   claim?: string
+  claimSeq?: number
   // The lease holder while claimed; on done or failed, the worker that finished it.
   worker?: string
   untilMs?: number
@@ -176,12 +177,19 @@ export type Board = {
   readonly scope: string
   readonly actor: string
   post(task: NewTask, options?: { key?: string; atMs?: number }): Promise<Verdict>
-  claim(id: string, options: { leaseMs: number; cap?: Cap; atMs?: number }): Promise<Claimed>
+  claim(
+    id: string,
+    options: { leaseMs: number; cap?: Cap; atMs?: number; waitMs?: number },
+  ): Promise<Claimed>
   renew(id: string, claim: string, leaseMs: number, atMs?: number): Promise<Verdict>
   release(id: string, claim: string, note?: string, atMs?: number): Promise<Verdict>
   finish(id: string, claim: string, outcome: Outcome, atMs?: number): Promise<Verdict>
   cancel(id: string, reason: string, atMs?: number): Promise<Verdict>
-  reply(id: string, body: string, atMs?: number): Promise<Verdict>
+  reply(
+    id: string,
+    body: string,
+    options?: number | { atMs?: number; key?: string },
+  ): Promise<Verdict>
   steer(
     id: string,
     text: string,
@@ -356,6 +364,30 @@ function wrap(
   })
   const write = (op: RawOp, at?: { atMs?: number; key?: string; by?: string }) =>
     call({ write: { board, write: wire(op, at) } }) as Promise<Verdict>
+  const claimOnce = async (
+    id: string,
+    options: { leaseMs: number; cap?: Cap; atMs?: number },
+  ): Promise<Claimed> => {
+    const verdict = await write(
+      {
+        op: 'claim',
+        task: id,
+        lease_ms: options.leaseMs,
+        ...(options.cap === undefined ? {} : { cap: wireCap(options.cap) }),
+      },
+      { atMs: options.atMs },
+    )
+    if (!verdict.ok) return verdict
+    const claimed = (verdict.change as { Claimed?: Record<string, unknown> } | null)?.Claimed
+    if (!claimed) throw new Error('claim of ' + id + ' applied without a claim')
+    return {
+      ok: true,
+      claim: claimed.claim as string,
+      untilMs: claimed.until_ms as number,
+      tookOver: claimed.took_over != null,
+      seq: verdict.seq,
+    }
+  }
 
   const self: Board = {
     scope: options.scope,
@@ -365,25 +397,19 @@ function wrap(
       return write({ op: 'post', task: newTask(task) }, at)
     },
 
-    async claim(id, { leaseMs, cap, atMs }) {
-      const verdict = await write(
-        {
-          op: 'claim',
-          task: id,
-          lease_ms: leaseMs,
-          ...(cap === undefined ? {} : { cap: wireCap(cap) }),
-        },
-        { atMs },
-      )
-      if (!verdict.ok) return verdict
-      const claimed = (verdict.change as { Claimed?: Record<string, unknown> } | null)?.Claimed
-      if (!claimed) throw new Error('claim of ' + id + ' applied without a claim')
-      return {
-        ok: true,
-        claim: claimed.claim as string,
-        untilMs: claimed.until_ms as number,
-        tookOver: claimed.took_over != null,
-        seq: verdict.seq,
+    async claim(id, options) {
+      const deadline = options.waitMs === undefined ? undefined : Date.now() + options.waitMs
+      for (;;) {
+        const claimed = await claimOnce(id, options)
+        if (claimed.ok || deadline === undefined || claimed.rejection.kind !== 'Held') {
+          return claimed
+        }
+
+        const now = Date.now()
+        if (now >= deadline) return claimed
+        const wake = Math.min(deadline, claimed.rejection.untilMs ?? deadline)
+        await new Promise((resolve) => setTimeout(resolve, wake - now))
+        await self.refresh()
       }
     },
 
@@ -407,8 +433,11 @@ function wrap(
       return write({ op: 'cancel', task: id, reason }, { atMs })
     },
 
-    reply(id, body, atMs) {
-      return write({ op: 'reply', task: id, body }, { atMs })
+    reply(id, body, options) {
+      return write(
+        { op: 'reply', task: id, body },
+        typeof options === 'number' ? { atMs: options } : options,
+      )
     },
 
     steer(id, text, at) {

@@ -1,7 +1,8 @@
 use std::{cell::RefCell, collections::BTreeMap, num::NonZeroU32, sync::Arc};
 
 use nanocode_board::{
-    Applied, Board, BoardError, Cap, ClaimId, Fold, Op, Phase, Rejection, Retain, Task, TaskId,
+    Applied, Board, BoardError, Cap, ClaimId, EventId, Fold, Op, Phase, Rejection, Retain, Task,
+    TaskId,
     access::{Identity, Verifier},
     checkpoint::{self as checkpoints, Fallback, Opened},
     shards::{self, Merged, Route},
@@ -380,6 +381,8 @@ async fn submit(boards: &mut [Board], write: Write) -> Result<Value, String> {
             .get_mut(partition)
             .ok_or("the write routes to a missing partition")?;
         let op = op.clone();
+        let found = keyed(board, write.by.as_deref(), write.key.as_deref());
+        let post = matches!(op, Op::Post { .. });
         let applied = match (write.by.clone(), write.key.clone()) {
             (None, Some(key)) => board.submit_keyed(&key, write.at_ms, op).await,
             (None, None) => board.submit(write.at_ms, op).await,
@@ -397,19 +400,24 @@ async fn submit(boards: &mut [Board], write: Write) -> Result<Value, String> {
                     Err(BoardError::Dropped("the group returned no verdict".into()))
                 }),
         };
-        verdicts.push(verdict(board, applied)?);
+        verdicts.push(verdict(board, applied, found, post)?);
     }
     Ok(merge(verdicts))
 }
 
 async fn group(boards: &mut [Board], writes: Vec<Write>) -> Result<Vec<Value>, String> {
     let count = writes.len();
-    let mut placed: BTreeMap<usize, Vec<(usize, nanocode_board::Write)>> = BTreeMap::new();
+    let mut placed: BTreeMap<usize, Vec<(Placed, nanocode_board::Write)>> = BTreeMap::new();
     for (index, write) in writes.into_iter().enumerate() {
         let (partitions, op) = route(boards, write.by.as_deref(), write.op)?;
+        let post = matches!(op, Op::Post { .. });
         for partition in partitions {
+            let board = boards
+                .get(partition)
+                .ok_or("the write routes to a missing partition")?;
+            let found = keyed(board, write.by.as_deref(), write.key.as_deref());
             placed.entry(partition).or_default().push((
-                index,
+                Placed { found, index, post },
                 nanocode_board::Write {
                     at_ms: write.at_ms,
                     by: write.by.clone(),
@@ -424,19 +432,40 @@ async fn group(boards: &mut [Board], writes: Vec<Write>) -> Result<Vec<Value>, S
         let board = boards
             .get_mut(partition)
             .ok_or("the write routes to a missing partition")?;
-        let (indices, members): (Vec<usize>, Vec<nanocode_board::Write>) =
+        let (places, members): (Vec<Placed>, Vec<nanocode_board::Write>) =
             members.into_iter().unzip();
         let (results, _) = board.submit_group(members).await;
-        for (index, result) in indices.into_iter().zip(results) {
-            if let Some(slot) = verdicts.get_mut(index) {
-                slot.push(verdict(board, result)?);
+        for (place, result) in places.into_iter().zip(results) {
+            if let Some(slot) = verdicts.get_mut(place.index) {
+                slot.push(verdict(board, result, place.found, place.post)?);
             }
         }
     }
     Ok(verdicts.into_iter().map(merge).collect())
 }
 
-fn verdict(board: &Board, applied: Result<Applied, BoardError>) -> Result<Value, String> {
+struct Placed {
+    found: bool,
+    index: usize,
+    post: bool,
+}
+
+fn keyed(board: &Board, by: Option<&str>, key: Option<&str>) -> bool {
+    key.is_some_and(|key| {
+        let by = by.unwrap_or_else(|| board.writer());
+        board
+            .fold()
+            .outcome(&EventId(format!("{by}#{key}")))
+            .is_some()
+    })
+}
+
+fn verdict(
+    board: &Board,
+    applied: Result<Applied, BoardError>,
+    found: bool,
+    post: bool,
+) -> Result<Value, String> {
     match applied {
         Ok(applied) => {
             let change = board
@@ -449,6 +478,7 @@ fn verdict(board: &Board, applied: Result<Applied, BoardError>) -> Result<Value,
             Ok(json!({
                 "change": change,
                 "event": applied.event,
+                "found": found || (post && change.is_none()),
                 "ok": true,
                 "seq": applied.seq,
             }))
@@ -545,7 +575,20 @@ fn view(merged: &Merged<'_>, task: &Task, at_ms: u64) -> Value {
             claim,
             until_ms,
             worker,
-        } => json!({ "claim": claim, "phase": "claimed", "untilMs": until_ms, "worker": worker }),
+        } => {
+            let mut claimed = json!({
+                "claim": claim,
+                "phase": "claimed",
+                "untilMs": until_ms,
+                "worker": worker,
+            });
+            if let (Value::Object(claimed), Some(seq)) =
+                (&mut claimed, claim_seq(merged, task, claim))
+            {
+                claimed.insert("claimSeq".into(), seq.into());
+            }
+            claimed
+        }
         Phase::Done { result, worker } => {
             finished(json!({ "outcome": { "done": result }, "phase": "done" }), worker.as_deref())
         }
@@ -559,6 +602,14 @@ fn view(merged: &Merged<'_>, task: &Task, at_ms: u64) -> Value {
         out.extend(phase);
     }
     out
+}
+
+fn claim_seq(merged: &Merged<'_>, task: &Task, claim: &ClaimId) -> Option<u64> {
+    let fold = merged.fold(merged.home(&task.spec.id)?)?;
+    fold.outcome(&EventId(claim.0.clone()))?
+        .as_ref()
+        .ok()
+        .copied()
 }
 
 fn finished(mut phase: Value, worker: Option<&str>) -> Value {

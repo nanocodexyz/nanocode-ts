@@ -1259,3 +1259,23 @@ The repository Actions setting returned `enabled: false`.
 The allowed-actions endpoint returned HTTP 409: `GitHub Actions is disabled on this repository by the organization`.
 No organization policy change or workflow dispatch was attempted.
 A real CI run remains blocked by that policy.
+
+## 2026-11-25: Board verdicts report found writes, tasks carry claimSeq, claims wait
+
+A `Board` verdict that is `ok` carries `found`.
+`found` is true when the write resolves to an earlier verdict: its key already had one in the fold, or it is a post that the fold matched to an identical earlier post.
+A keyed write by another process with the same actor that landed after the last `refresh()` reads as `found: false`.
+
+A claimed `Task` carries `claimSeq`, the seq of the row that took its current claim, and `Claimed.seq` is the same number.
+A later claim on the task, such as a takeover, lands on the same partition at a larger seq, so a host can fence its own writes with it.
+`claimSeq` is absent when the fold no longer holds that claim's verdict.
+
+`claim(id, { leaseMs, waitMs })` retries a `Held` claim until `waitMs` passes.
+Between tries it sleeps until the holder's `untilMs` or the deadline, whichever is first, then refreshes.
+After the deadline it returns the `Held` rejection.
+A release before `untilMs` is not seen until that wake.
+
+`reply(id, body, { atMs, key })` keys a reply, so a retry with the same key lands once.
+A number as the third argument still sets `atMs`.
+
+Validation: `npx tsc --noEmit`, and `output/tsboard/check.ts` against the rebuilt module over `memorySql`.
