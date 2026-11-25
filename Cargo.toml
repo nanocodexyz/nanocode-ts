@@ -15,16 +15,23 @@ test = false
 doctest = false
 bench = false
 
+[features]
+default = ["agents"]
+agents = ["dep:blake3", "dep:nanocode", "dep:nanocode-code-mode", "dep:nanocode-http", "dep:nanocode-sync"]
+
 [dependencies]
-nanocode = { path = "../nanocodex/crates/nanocode" }
+nanocode = { path = "../nanocodex/crates/nanocode", optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 nanocode-board = { path = "../nanocodex/crates/runtime/board" }
-nanocode-code-mode = { path = "../nanocodex/crates/runtime/code-mode" }
+nanocode-code-mode = { path = "../nanocodex/crates/runtime/code-mode", optional = true }
+nanocode-durability-core = { path = "../nanocodex/crates/core/durability" }
 nanocode-partitions = { path = "../nanocodex/crates/core/partitions" }
-nanocode-sync = { path = "../nanocodex/crates/core/sync" }
-nanocode-http = { path = "../nanocodex/crates/core/http" }
-blake3 = { version = "1.8.7", default-features = false, features = ["wasm32_simd"] }
+nanocode-platform = { path = "../nanocodex/crates/core/platform" }
+nanocode-sync = { path = "../nanocodex/crates/core/sync", optional = true }
+nanocode-http = { path = "../nanocodex/crates/core/http", optional = true }
+nanocode-turnlog = { path = "../nanocodex/crates/core/turnlog" }
+blake3 = { version = "1.8.7", default-features = false, features = ["wasm32_simd"], optional = true }
 futures-channel = "0.3.31"
 futures-executor = "0.3.31"
 futures-util = "0.3.31"
@@ -43,6 +50,10 @@ lto = "off"
 codegen-units = 1
 panic = "abort"
 strip = "symbols"
+
+[profile.board]
+inherits = "wasm"
+lto = "fat"
 
 [profile.wasm.package.djs-core]
 opt-level = 3

@@ -1,6 +1,5 @@
 use std::{cell::RefCell, collections::BTreeMap, num::NonZeroU32, sync::Arc};
 
-use nanocode::turnlog::{LogHost, SqlLog};
 use nanocode_board::{
     Applied, Board, BoardError, Cap, ClaimId, Fold, Op, Phase, Rejection, Retain, Task, TaskId,
     access::{Identity, Verifier},
@@ -9,6 +8,7 @@ use nanocode_board::{
     steer::Steer,
 };
 use nanocode_partitions::Partition;
+use nanocode_turnlog::{LogHost, SqlLog};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 

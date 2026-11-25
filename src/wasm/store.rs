@@ -1,15 +1,16 @@
 use std::cell::RefCell;
 
-use nanocode::{
-    claude::RootRegion,
-    durability::{
-        BlobKey, BlobStore, Sql, SqlAccess, SqlRow, SqlStatement, StoreError, StoreFuture,
-    },
+#[cfg(feature = "agents")]
+use nanocode::claude::RootRegion;
+use nanocode_durability_core::{
+    BlobKey, BlobStore, Sql, SqlAccess, SqlRow, SqlStatement, StoreError, StoreFuture,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use super::bridge::{call, call_bytes_with, call_optional_bytes, call_with_body, spawn};
+use super::bridge::{call_bytes_with, call_optional_bytes, call_with_body};
+#[cfg(feature = "agents")]
+use super::bridge::{call, spawn};
 
 const NULL_CELL: u32 = u32::MAX;
 
@@ -47,10 +48,12 @@ thread_local! {
     static SENT: std::cell::RefCell<std::collections::HashMap<usize, u32>> = std::cell::RefCell::default();
 }
 
+#[cfg(feature = "agents")]
 pub struct WorkerRegion {
     pub session: String,
 }
 
+#[cfg(feature = "agents")]
 impl RootRegion for WorkerRegion {
     fn adopted(&self, fresh: bool) {
         spawn(async move {

@@ -9,7 +9,7 @@ use std::{
 use futures_channel::oneshot;
 use futures_executor::{LocalPool, LocalSpawner};
 use futures_util::task::LocalSpawnExt;
-use nanocode::platform::{Host, LocalFuture};
+use nanocode_platform::{Host, LocalFuture};
 use serde_json::{Value, json};
 
 #[link(wasm_import_module = "host")]
@@ -33,8 +33,10 @@ unsafe extern "C" {
     fn snapshot_write(setup: u64, pointer: *const u8, length: usize);
 }
 
+#[cfg(feature = "agents")]
 pub struct HostSnapshots;
 
+#[cfg(feature = "agents")]
 impl nanocode_code_mode::code_mode::SnapshotStore for HostSnapshots {
     fn load(&self, setup: u64) -> Option<Vec<u8>> {
         let length = unsafe { snapshot_length(setup) };
@@ -226,7 +228,7 @@ pub fn install() {
         let detail = info.to_string();
         unsafe { panicked(detail.as_ptr(), detail.len()) };
     }));
-    nanocode::platform::install(Rc::new(WorkerHost)).expect("install worker host");
+    nanocode_platform::install(Rc::new(WorkerHost)).expect("install worker host");
 }
 
 pub struct WorkerHost;

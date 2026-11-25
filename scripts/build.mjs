@@ -135,6 +135,15 @@ let previous;
 try { previous = readFileSync("dist/nanocode_wasm.wasm"); } catch (error) { if (error.code !== "ENOENT") throw error; }
 if (!previous?.equals(bytes)) writeFileSync("dist/nanocode_wasm.wasm", bytes);
 
+const board = spawnSync("cargo", ["build", "--locked", "--offline", "--lib", "--target", "wasm32-unknown-unknown", "--profile", "board", "--no-default-features", "--target-dir", "target/board"], { stdio: "inherit" });
+if (board.error) throw board.error;
+if (board.status !== 0) process.exit(board.status ?? 1);
+optimize("target/board/wasm32-unknown-unknown/board/nanocode_wasm.wasm", "target/board/wasm32-unknown-unknown/board/nanocode_board.opt.wasm", ["-Oz"]);
+const boardBytes = readFileSync("target/board/wasm32-unknown-unknown/board/nanocode_board.opt.wasm");
+let previousBoard;
+try { previousBoard = readFileSync("dist/nanocode_board.wasm"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+if (!previousBoard?.equals(boardBytes)) writeFileSync("dist/nanocode_board.wasm", boardBytes);
+
 fetchCrates("interpreter");
 const interpreter = spawnSync("cargo", ["build", "--locked", "--offline", "--release", "--target", "wasm32-unknown-unknown", "--target-dir", "../target/interpreter"], { cwd: "interpreter", stdio: "inherit" });
 if (interpreter.error) throw interpreter.error;
