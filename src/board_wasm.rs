@@ -14,6 +14,17 @@ use serde_json::Value;
 #[serde(rename_all = "snake_case")]
 enum Command {
     Board(board::Request),
+    #[expect(dead_code, reason = "boards read no session log setting")]
+    Configure {
+        #[serde(default)]
+        blob_threshold: Option<usize>,
+        #[serde(default)]
+        restarts: Option<u64>,
+        #[serde(default)]
+        retain_finished: Option<usize>,
+        #[serde(default)]
+        value_limit: Option<usize>,
+    },
 }
 
 #[derive(Serialize)]
@@ -30,6 +41,7 @@ pub unsafe extern "C" fn command(id: u32, pointer: *mut u8, length: usize) {
     bridge::spawn(async move {
         let result = match serde_json::from_slice::<Command>(&bytes) {
             Ok(Command::Board(request)) => board::execute(request).await,
+            Ok(Command::Configure { .. }) => Ok(Value::Null),
             Err(error) => Err(error.to_string()),
         };
         bridge::respond(
