@@ -63,6 +63,7 @@ enum Provider {
 #[derive(Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum GoogleRoute {
+    Antigravity,
     #[default]
     ApiKey,
     Vertex,
@@ -1032,7 +1033,12 @@ async fn log(scope: &str) -> Result<Arc<Log>, String> {
         return Ok(log);
     }
     let opened = OneLog::open(
-        Arc::new(SqlLog::new(Arc::new(store::WorkerStore::log()))),
+        Arc::new(SqlLog::new(
+            Arc::new(store::WorkerStore::log()),
+            &store::log_migrated()
+                .await
+                .map_err(|error| error.to_string())?,
+        )),
         scope,
         Policy {
             effects: Effects::default(),
@@ -1218,9 +1224,15 @@ fn antigravity_harness(
     workspace: Option<&str>,
 ) -> Result<nanocode::antigravity::AntigravityHarness, Opening> {
     use nanocode::antigravity::{Auth, AuthMethod, Route};
-    if endpoint.subscription {
+    let plan = matches!(google.auth, GoogleRoute::Antigravity);
+    if endpoint.subscription && !plan {
         return Err(configuration(
-            "the antigravity harness takes a Gemini API key, a Vertex AI token or key, or a gateway the host authorizes, not a plan sign-in",
+            "the antigravity harness takes a Gemini API key, a Vertex AI token or key, or a gateway the host authorizes, not a plan sign-in, unless google.auth is antigravity",
+        ));
+    }
+    if plan && !endpoint.subscription {
+        return Err(configuration(
+            "google.auth antigravity serves an Antigravity plan sign-in: set subscription, and let the host add the plan's credential",
         ));
     }
     if endpoint.gateway.is_some() {
@@ -1235,6 +1247,12 @@ fn antigravity_harness(
         .filter(|location| !location.trim().is_empty())
         .unwrap_or_else(|| nanocode::antigravity::VERTEX_GLOBAL_LOCATION.to_owned());
     let (base_url, route) = match google.auth {
+        GoogleRoute::Antigravity => (
+            given.unwrap_or_else(|| nanocode::antigravity::SUBSCRIPTION_BASE_URL.to_owned()),
+            Route::Antigravity {
+                project: google.project.unwrap_or_default(),
+            },
+        ),
         GoogleRoute::ApiKey => (
             given.unwrap_or_else(|| GEMINI_API_BASE_URL.to_owned()),
             Route::GeminiApi,

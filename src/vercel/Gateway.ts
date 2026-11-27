@@ -54,6 +54,7 @@ export function endpoint(provider: Contracts.ModelProvider): string {
 }
 
 export function planEndpoint(provider: Contracts.ModelProvider): string {
+  if (provider === 'antigravity') return 'https://daily-cloudcode-pa.googleapis.com'
   return provider === 'codex'
     ? 'https://chatgpt.com/backend-api/codex'
     : 'https://api.anthropic.com/v1/messages?beta=true'

@@ -1,10 +1,15 @@
-import type { ChatGpt, Claude } from 'nanocode-egress'
+import type { Antigravity, ChatGpt, Claude } from 'nanocode-egress'
 
-export type Provider = 'claude' | 'codex'
+export type Provider = 'antigravity' | 'claude' | 'codex'
 
-export type Status = { claude: Claude.Status; codex: ChatGpt.Status }
+export type Status = {
+  antigravity: Antigravity.Status
+  claude: Claude.Status
+  codex: ChatGpt.Status
+}
 
 export type SignIn =
+  | { provider: 'antigravity'; authorization_url: string; expires_at: number }
   | { provider: 'claude'; authorization_url: string; expires_at: number }
   | { provider: 'codex'; status: ChatGpt.Status }
 
@@ -54,14 +59,25 @@ export declare namespace create {
   }
 }
 
-const vendors: Record<Provider, RegExp> = { claude: /^claude-/, codex: /^gpt-/ }
+const vendors: Record<Provider, RegExp> = {
+  antigravity: /^gemini-/,
+  claude: /^claude-/,
+  codex: /^gpt-/,
+}
+
+const names: Record<Provider, string> = {
+  antigravity: 'Antigravity',
+  claude: 'Claude',
+  codex: 'ChatGPT',
+}
 
 export function serves(provider: string, model?: string | undefined): provider is Provider {
   return (
-    (provider === 'claude' || provider === 'codex') && (!model || vendors[provider].test(model))
+    (provider === 'antigravity' || provider === 'claude' || provider === 'codex') &&
+    (!model || vendors[provider].test(model))
   )
 }
 
 export function name(provider: Provider): string {
-  return provider === 'codex' ? 'ChatGPT' : 'Claude'
+  return names[provider]
 }

@@ -1,10 +1,11 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, time::Duration};
 
 #[cfg(feature = "agents")]
 use nanocode::claude::RootRegion;
 use nanocode_durability_core::{
-    BlobKey, BlobStore, Sql, SqlAccess, SqlRow, SqlStatement, StoreError, StoreFuture,
+    BlobKey, BlobStore, Migrated, Sql, SqlAccess, SqlRow, SqlStatement, StoreError, StoreFuture,
 };
+use nanocode_turnlog::SqlLog;
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -20,6 +21,19 @@ impl WorkerStore {
     pub const fn log() -> Self {
         Self("log")
     }
+}
+
+thread_local! {
+    static MIGRATED: RefCell<Option<Migrated>> = const { RefCell::new(None) };
+}
+
+pub async fn log_migrated() -> Result<Migrated, StoreError> {
+    if let Some(migrated) = MIGRATED.with_borrow(Clone::clone) {
+        return Ok(migrated);
+    }
+    let migrated = SqlLog::migrate(&WorkerStore::log()).await?;
+    MIGRATED.with_borrow_mut(|cached| *cached = Some(migrated.clone()));
+    Ok(migrated)
 }
 
 #[derive(Serialize)]
@@ -202,6 +216,10 @@ impl Sql for WorkerStore {
         self.run(SqlAccess::Write, operation, statements)
     }
 
+    fn call_bound(&self) -> Option<Duration> {
+        None
+    }
+
     fn run<'a>(
         &'a self,
         access: SqlAccess,
@@ -211,7 +229,7 @@ impl Sql for WorkerStore {
         Box::pin(async move {
             let region = match access {
                 SqlAccess::Write => REGION.take(),
-                SqlAccess::Read | SqlAccess::Schema => None,
+                SqlAccess::Read | SqlAccess::Schema | SqlAccess::Autocommit => None,
             };
             let reply = call_bytes_with(
                 &Transaction {
@@ -219,7 +237,7 @@ impl Sql for WorkerStore {
                     access: match access {
                         SqlAccess::Read => "read",
                         SqlAccess::Write => "write",
-                        SqlAccess::Schema => "schema",
+                        SqlAccess::Schema | SqlAccess::Autocommit => "schema",
                     },
                     operation,
                     root_region: region.as_ref().map(|region| RegionHead {

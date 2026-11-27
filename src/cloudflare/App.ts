@@ -671,9 +671,7 @@ export function create<E extends Env>(options: create.Options<E>): create.Return
     options.subscription ??
     (plans &&
       ((account: string, env: E, provider: Contracts.ModelProvider) =>
-        provider === 'antigravity'
-          ? false
-          : plans.subscription(account, env as E & Plans.Env, provider)))
+        plans.subscription(account, env as E & Plans.Env, provider)))
   const served = (
     provider: Contracts.ModelProvider,
     model: string | undefined,
@@ -1106,8 +1104,8 @@ export function create<E extends Env>(options: create.Options<E>): create.Return
           const input = (await request.json().catch(() => null)) as any
           const provider =
             this.metadata.get(`model_provider:${scope}`) ?? input?.provider ?? 'claude'
-          if (provider !== 'claude' && provider !== 'codex')
-            return json({ error: 'provider must be claude or codex' }, 400)
+          if (provider !== 'antigravity' && provider !== 'claude' && provider !== 'codex')
+            return json({ error: 'provider must be antigravity, claude or codex' }, 400)
           const webSearch = input?.web_search
           if (webSearch !== undefined && typeof webSearch !== 'boolean')
             return json({ error: 'web_search must be a boolean' }, 400)
@@ -1140,7 +1138,9 @@ export function create<E extends Env>(options: create.Options<E>): create.Return
               ? input.model
               : provider === 'codex'
                 ? 'gpt-6.1-sol'
-                : (this.env.CLAUDE_MODEL ?? 'claude-opus-5-5'))
+                : provider === 'antigravity'
+                  ? 'gemini-4-neon'
+                  : (this.env.CLAUDE_MODEL ?? 'claude-opus-5-5'))
           const opened = this.prewarm(scope, descriptor, provider, model).catch(() => false)
           if (provider === 'codex' && workersAiModel(model)) {
             await Promise.all([instance, opened])
@@ -1394,8 +1394,8 @@ export function create<E extends Env>(options: create.Options<E>): create.Return
             return json(
               {
                 error: subscribed
-                  ? `${descriptor.model ?? 'this model'} is not on your ${descriptor.provider === 'codex' ? 'ChatGPT' : 'Claude'} plan`
-                  : `sign in to your ${descriptor.provider === 'codex' ? 'ChatGPT' : 'Claude'} plan first, or choose another payer`,
+                  ? `${descriptor.model ?? 'this model'} is not on your ${PlanModels.name(descriptor.provider ?? 'claude')} plan`
+                  : `sign in to your ${PlanModels.name(descriptor.provider ?? 'claude')} plan first, or choose another payer`,
               },
               403,
             )
@@ -2544,7 +2544,8 @@ ${input.request_id}`
           ? 'https://chatgpt.com/backend-api/codex'
           : 'https://api.openai.com/v1'
         const provider = descriptor.provider ?? 'claude'
-        const model = descriptor.model ?? (provider === 'codex' ? undefined : this.env.CLAUDE_MODEL)
+        const model =
+          descriptor.model ?? (provider === 'claude' ? this.env.CLAUDE_MODEL : undefined)
         const other = provider === 'codex' ? 'claude' : 'codex'
         const both = options.harnesses === 'both'
         try {
@@ -2570,7 +2571,14 @@ ${input.request_id}`
               endpoint:
                 descriptor.provider === 'codex'
                   ? codexEndpoint
-                  : `https://api.anthropic.com/v1/messages${descriptor.subscription ? '?beta=true' : ''}`,
+                  : descriptor.provider === 'antigravity'
+                    ? descriptor.subscription
+                      ? 'https://daily-cloudcode-pa.googleapis.com'
+                      : 'https://generativelanguage.googleapis.com'
+                    : `https://api.anthropic.com/v1/messages${descriptor.subscription ? '?beta=true' : ''}`,
+              ...(descriptor.provider === 'antigravity' && descriptor.subscription
+                ? { google: { auth: 'antigravity' as const } }
+                : {}),
               ...(descriptor.provider === 'codex' && workersAiModel(descriptor.model)
                 ? {
                     gateway: 'workers_ai' as const,
@@ -4180,8 +4188,13 @@ ${input.request_id}`
     }
 
     private invalidTurn(input: any): Response | undefined {
-      if (input.provider !== undefined && input.provider !== 'claude' && input.provider !== 'codex')
-        return json({ error: 'provider must be claude or codex' }, 400)
+      if (
+        input.provider !== undefined &&
+        input.provider !== 'antigravity' &&
+        input.provider !== 'claude' &&
+        input.provider !== 'codex'
+      )
+        return json({ error: 'provider must be antigravity, claude or codex' }, 400)
       if (input.model !== undefined && (typeof input.model !== 'string' || !input.model))
         return json({ error: 'model must be a nonempty model ID' }, 400)
       if (input.thinking !== undefined && !thinkingLevels.includes(input.thinking))

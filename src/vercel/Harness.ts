@@ -10,6 +10,7 @@ import {
   type Submission,
 } from 'durable-harness'
 import * as LiveEvent from '../client/LiveEvent.ts'
+import * as PlanModels from '../client/Plans.ts'
 import * as Contracts from '../Contracts.ts'
 import * as AgentRuntime from '../AgentRuntime.ts'
 import * as Remote from '../Remote.ts'
@@ -216,7 +217,7 @@ export function create(options: create.Options = {}): Harness {
         : undefined
     if (session.payer === 'plan' && !plan)
       throw new Error(
-        `the ${session.provider === 'codex' ? 'ChatGPT' : 'Claude'} plan that pays for this session is signed out; sign in again or start a new session`,
+        `the ${PlanModels.name(session.provider)} plan that pays for this session is signed out; sign in again or start a new session`,
       )
     const wallet = session.payer === 'wallet' ? options.wallet?.(ctx.runId) : undefined
     if (session.payer === 'wallet' && !wallet)
@@ -277,6 +278,9 @@ export function create(options: create.Options = {}): Harness {
                 ? [options.instructions, options.handInstructions].filter(Boolean).join('\n\n')
                 : options.instructions,
             subscription: plan !== undefined,
+            ...(plan && session.provider === 'antigravity'
+              ? { google: { auth: 'antigravity' as const } }
+              : {}),
             endpoint: plan
               ? Gateway.planEndpoint(session.provider)
               : wallet

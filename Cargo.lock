@@ -300,6 +300,7 @@ dependencies = [
  "nanocode-durability",
  "nanocode-platform",
  "nanocode-process-contracts",
+ "nanocode-scope",
  "nanocode-store-jsonl",
  "nanocode-subagents",
  "nanocode-tool-host",
@@ -318,6 +319,7 @@ dependencies = [
  "nanocode-digest",
  "nanocode-durability",
  "nanocode-platform",
+ "nanocode-scope",
  "nanocode-subagents",
  "nanocode-sync",
  "nanocode-tool-contracts",
@@ -408,6 +410,7 @@ dependencies = [
  "nanocode-backend-antigravity-tools",
  "nanocode-durability",
  "nanocode-home",
+ "nanocode-http",
  "nanocode-platform",
  "nanocode-process-contracts",
  "nanocode-sync",
@@ -423,12 +426,15 @@ dependencies = [
 name = "nanocode-backend-antigravity-client"
 version = "0.7.0"
 dependencies = [
+ "nanocode-digest",
  "nanocode-google-auth",
  "nanocode-home",
  "nanocode-http",
  "nanocode-platform",
  "nanocode-sync",
+ "nanocode-sys",
  "nanocode-tls",
+ "nanocode-url",
  "serde",
  "serde_json",
 ]
@@ -439,6 +445,7 @@ version = "0.7.0"
 dependencies = [
  "nanocode-platform",
  "nanocode-process-contracts",
+ "nanocode-sync",
  "serde_json",
 ]
 
@@ -452,6 +459,7 @@ dependencies = [
  "nanocode-backend-claude-tools",
  "nanocode-code-mode",
  "nanocode-durability",
+ "nanocode-durability-core",
  "nanocode-executor",
  "nanocode-home",
  "nanocode-http",
@@ -521,6 +529,7 @@ dependencies = [
  "nanocode-code-mode",
  "nanocode-digest",
  "nanocode-durability",
+ "nanocode-durability-core",
  "nanocode-executor",
  "nanocode-home",
  "nanocode-http",
@@ -955,6 +964,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nanocode-scope"
+version = "0.7.0"
+dependencies = [
+ "nanocode-digest",
+ "nanocode-durability-core",
+ "nanocode-partitions",
+ "nanocode-platform",
+ "nanocode-sync",
+ "nanocode-turnlog",
+ "serde_json",
+]
+
+[[package]]
 name = "nanocode-store-jsonl"
 version = "0.7.0"
 dependencies = [
@@ -1117,8 +1139,10 @@ dependencies = [
  "nanocode-compression",
  "nanocode-durability-core",
  "nanocode-partitions",
+ "nanocode-platform",
  "nanocode-sync",
  "nanocode-sys",
+ "nanocode-trace",
  "serde",
  "serde_json",
 ]

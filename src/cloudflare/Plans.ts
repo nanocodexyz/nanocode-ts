@@ -17,7 +17,7 @@ export type Options<E> = {
 
 type Authenticated = string | { account: string; read_only?: boolean } | null
 
-export type Provider = 'claude' | 'codex'
+export type Provider = 'antigravity' | 'claude' | 'codex'
 
 export function create<E extends Env>(
   options: Options<E> & {

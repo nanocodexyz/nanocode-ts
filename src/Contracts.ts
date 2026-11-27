@@ -2,7 +2,7 @@ export type ModelProvider = 'antigravity' | 'claude' | 'codex'
 
 export type ToolProvider = Exclude<ModelProvider, 'antigravity'>
 
-export type GoogleAuth = 'api_key' | 'vertex' | 'vertex_express' | 'gateway'
+export type GoogleAuth = 'antigravity' | 'api_key' | 'vertex' | 'vertex_express' | 'gateway'
 
 export type GoogleOptions = { auth?: GoogleAuth; project?: string; location?: string }
 

@@ -230,7 +230,10 @@ async fn open(
             None => Ok(identity),
         })
         .map_err(|denied| format!("{actor}: {denied:?}"))?;
-    let host: Arc<dyn LogHost> = Arc::new(SqlLog::new(Arc::new(WorkerStore::log())));
+    let migrated = super::store::log_migrated()
+        .await
+        .map_err(|error| error.to_string())?;
+    let host: Arc<dyn LogHost> = Arc::new(SqlLog::new(Arc::new(WorkerStore::log()), &migrated));
     let mut boards = Vec::with_capacity(partitions.get() as usize);
     for index in 0..partitions.get() {
         let fold = retain.clone().map_or_else(Fold::new, Fold::retaining);
