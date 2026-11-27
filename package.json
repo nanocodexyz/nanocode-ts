@@ -129,7 +129,7 @@
     "mdast-util-gfm": "3.1.0",
     "micromark-extension-gfm": "3.0.0",
     "mppx": "0.20.1",
-    "nanocode-egress": "https://github.com/nanocodexyz/egress/releases/download/build-654d587/nanocode-egress-654d587.tgz",
+    "nanocode-egress": "https://github.com/nanocodexyz/egress/releases/download/build-84d200b/nanocode-egress-84d200b.tgz",
     "ox": "0.14.65",
     "rehype-harden": "1.1.8",
     "rehype-sanitize": "6.0.0",
