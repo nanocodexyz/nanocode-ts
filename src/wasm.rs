@@ -24,6 +24,7 @@ use std::{
 };
 
 use nanocode::antigravity::GoogleBuilder;
+use nanocode::kimi::KimiBuilder;
 use nanocode::{
     AgentId, ClaudeClient, ClaudeHarness, ClaudeModel, CodeModeExecutors, CodeModeHost,
     CodexHarness, HarnessFamily, Model, ModelInfo, ModelSelection, ModelTransport, Nanocode,
@@ -58,6 +59,7 @@ enum Provider {
     #[default]
     Claude,
     Codex,
+    Kimi,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
@@ -162,6 +164,14 @@ enum CodexOrchestration {
     Jobs,
 }
 
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum KimiOrchestration {
+    #[default]
+    CodeMode,
+    Direct,
+}
+
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Gateway {
@@ -177,12 +187,16 @@ impl Provider {
             ),
             Self::Claude => ModelSelection::Claude(ClaudeModel::Opus55),
             Self::Codex => ModelSelection::Codex(Model::Sol),
+            Self::Kimi => {
+                nanocode::kimi::KimiHarness::selection(nanocode::kimi::DEFAULT_MODEL)
+            }
         }
     }
 
     fn select(self, model: &str) -> Result<ModelSelection, String> {
         let selection = match self {
             Self::Antigravity => nanocode::antigravity::AntigravityHarness::selection(model),
+            Self::Kimi => nanocode::kimi::KimiHarness::selection(model),
             Self::Claude => model.parse::<ClaudeModel>().map_or_else(
                 |_| ModelSelection::new(HarnessFamily::Claude, model),
                 ModelSelection::Claude,
@@ -341,6 +355,8 @@ struct Configuration {
     yield_share: Option<std::num::NonZeroU8>,
     #[serde(default)]
     codex_orchestration: CodexOrchestration,
+    #[serde(default)]
+    kimi_orchestration: KimiOrchestration,
     #[serde(default)]
     service_tier: Option<ServiceTier>,
     #[serde(default)]
@@ -565,7 +581,7 @@ impl Configuration {
             }
             Provider::Claude => Ok((Some(root), codex, None)),
             Provider::Codex => Ok((claude, Some(root), None)),
-            Provider::Antigravity => Ok((claude, codex, Some(root))),
+            Provider::Antigravity | Provider::Kimi => Ok((claude, codex, Some(root))),
         }
     }
 }
@@ -918,7 +934,7 @@ impl WorkspaceToolSelection {
             (Self::All(tools), _) => Some(*tools),
             (Self::Providers { claude, .. }, Provider::Claude) => *claude,
             (Self::Providers { codex, .. }, Provider::Codex) => *codex,
-            (Self::Providers { .. }, Provider::Antigravity) => None,
+            (Self::Providers { .. }, Provider::Antigravity | Provider::Kimi) => None,
         }
     }
 }
@@ -947,7 +963,7 @@ impl WebSearch {
             (Self::All(enabled), _) => *enabled,
             (Self::Providers { claude, .. }, Provider::Claude) => *claude,
             (Self::Providers { codex, .. }, Provider::Codex) => *codex,
-            (Self::Providers { .. }, Provider::Antigravity) => true,
+            (Self::Providers { .. }, Provider::Antigravity | Provider::Kimi) => true,
         }
     }
 }
@@ -1292,6 +1308,59 @@ fn antigravity_harness(
 
 const GEMINI_API_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 
+fn kimi_harness(
+    endpoint: Endpoint,
+    environment: Option<&Environment>,
+    model: &ModelSelection,
+    orchestration: KimiOrchestration,
+    window: Option<u64>,
+) -> Result<nanocode::kimi::KimiHarness, Opening> {
+    if endpoint.subscription || endpoint.gateway.is_some() {
+        return Err(configuration(
+            "the kimi harness speaks Kimi Chat Completions with a key the host authorizes: no plan sign-in, no gateway",
+        ));
+    }
+    let base = endpoint.endpoint.trim().trim_end_matches('/');
+    let base_url = match base.is_empty() {
+        true => nanocode::kimi::DEFAULT_BASE_URL.to_owned(),
+        false => base.to_owned(),
+    };
+    let zone = environment
+        .and_then(|environment| environment.timezone.clone())
+        .unwrap_or_else(|| "Etc/UTC".to_owned());
+    let today = {
+        let zone = zone.clone();
+        Arc::new(move || bridge::local_date(&zone).unwrap_or_default()) as nanocode::kimi::Clock
+    };
+    let harness = nanocode::kimi::KimiHarness::new()
+        .endpoint(nanocode::kimi::Endpoint {
+            base_url,
+            api_key: None,
+            user_agent: "nanocode-ts".to_owned(),
+        })
+        .sender(Arc::new(transport::WorkerTransport::KIMI))
+        .model(model.as_str())
+        .direct_tools(matches!(orchestration, KimiOrchestration::Direct))
+        .environment(nanocode::kimi::Environment {
+            shell: environment
+                .and_then(|environment| environment.shell.as_deref())
+                .map(|shell| {
+                    let name = shell.rsplit('/').next().unwrap_or(shell);
+                    (name.to_owned(), shell.to_owned())
+                }),
+            cwd: environment.and_then(|environment| environment.cwd.clone()),
+            agents_md: environment
+                .and_then(|environment| environment.project_instructions.clone()),
+            timezone: Some(zone),
+            today: Some(today),
+            ..nanocode::kimi::Environment::default()
+        });
+    Ok(match window {
+        Some(window) => harness.context_window(window),
+        None => harness,
+    })
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one session setting of the Codex harness"
@@ -1437,17 +1506,29 @@ async fn open(mut config: Configuration) -> Result<Session, Opening> {
         }
     }
     let environment = resolve(environment)?;
-    let (claude, codex, antigravity) = config.endpoints().map_err(configuration)?;
-    let antigravity = antigravity
-        .map(|endpoint| {
-            antigravity_harness(
+    let (claude, codex, own) = config.endpoints().map_err(configuration)?;
+    let (antigravity, kimi) = match (own, config.provider) {
+        (Some(endpoint), Provider::Kimi) => (
+            None,
+            Some(kimi_harness(
+                endpoint,
+                environment.as_ref(),
+                &model,
+                config.kimi_orchestration,
+                config.auto_compact_window_tokens,
+            )?),
+        ),
+        (Some(endpoint), _) => (
+            Some(antigravity_harness(
                 endpoint,
                 config.google.take().unwrap_or_default(),
                 &model,
                 config.workspace.as_deref(),
-            )
-        })
-        .transpose()?;
+            )?),
+            None,
+        ),
+        (None, _) => (None, None),
+    };
     let claude_only = claude.is_some() && codex.is_none();
     let hedging = hedging(&config.hedge)?;
     let claude_search_tokens = claude.as_ref().map(|endpoint| endpoint.max_tokens);
@@ -1545,7 +1626,7 @@ async fn open(mut config: Configuration) -> Result<Session, Opening> {
         Some(endpoint) => {
             let default = match config.provider {
                 Provider::Codex => model.as_codex(),
-                Provider::Claude | Provider::Antigravity => Some(Model::Sol),
+                Provider::Claude | Provider::Antigravity | Provider::Kimi => Some(Model::Sol),
             };
             let Some(default) = default else {
                 return Err(configuration(format!("{model} is not a Codex model")));
@@ -1610,7 +1691,7 @@ async fn open(mut config: Configuration) -> Result<Session, Opening> {
         let replaced = match family {
             Provider::Claude => host_search[0],
             Provider::Codex => host_search[1],
-            Provider::Antigravity => true,
+            Provider::Antigravity | Provider::Kimi => true,
         };
         if !config.web_search.enabled(family) || replaced {
             return None;
@@ -1632,7 +1713,7 @@ async fn open(mut config: Configuration) -> Result<Session, Opening> {
                         nanocode::codex_tools::web_search_tool(endpoint, *prefix, transport)
                     }) as Arc<dyn Tool>
                 }),
-            Provider::Antigravity => None,
+            Provider::Antigravity | Provider::Kimi => None,
         }
     };
     let image_root = config.workspace.clone();
@@ -1741,6 +1822,12 @@ async fn open(mut config: Configuration) -> Result<Session, Opening> {
     }
     if let Some(harness) = antigravity {
         builder = builder.google(harness);
+    }
+    if let Some(harness) = kimi {
+        builder = builder.kimi(harness).tools(gated(
+            selected(Provider::Kimi)?,
+            nanocode::tool_contract::ToolSettings::DEFAULT,
+        )?);
     }
     if let Some((harness, _)) = claude {
         builder = builder.claude(harness.tools(gated(
@@ -2296,10 +2383,18 @@ fn models() -> Value {
             )
         })
         .collect::<Vec<_>>();
+    let kimi = [entry(
+        nanocode::kimi::DEFAULT_MODEL,
+        nanocode::kimi::KimiHarness::selection(nanocode::kimi::DEFAULT_MODEL),
+        vec!["direct"],
+        Model::Kimi.max_context_window_tokens(),
+        None,
+    )];
     json!({"harnesses": [
         {"id": "claude", "models": claude},
         {"id": "codex", "models": codex},
         {"id": "antigravity", "models": antigravity},
+        {"id": "kimi", "models": kimi},
     ]})
 }
 

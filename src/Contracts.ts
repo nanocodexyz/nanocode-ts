@@ -1,6 +1,6 @@
-export type ModelProvider = 'antigravity' | 'claude' | 'codex'
+export type ModelProvider = 'antigravity' | 'claude' | 'codex' | 'kimi'
 
-export type ToolProvider = Exclude<ModelProvider, 'antigravity'>
+export type ToolProvider = Exclude<ModelProvider, 'antigravity' | 'kimi'>
 
 export type GoogleAuth = 'api_key' | 'vertex' | 'vertex_express' | 'gateway'
 
@@ -54,6 +54,8 @@ export type ServiceTier = 'standard' | 'priority' | 'fast' | 'ultrafast'
 export type ClaudeOrchestration = 'code_mode' | 'direct'
 
 export type CodexOrchestration = 'code_mode' | 'direct' | 'jobs'
+
+export type KimiOrchestration = 'code_mode' | 'direct'
 
 export type Deadline = { at_ms: number; limit_ms: number }
 
@@ -124,6 +126,7 @@ export type AgentConfiguration = {
   cell_yield_ms?: number
   claude_orchestration?: ClaudeOrchestration
   codex_orchestration?: CodexOrchestration
+  kimi_orchestration?: KimiOrchestration
   deadline?: Deadline
   refusal_fallback?: RefusalFallback
   brief_final?: boolean

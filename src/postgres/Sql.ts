@@ -132,6 +132,13 @@ export const channel = 'nanocode_log'
  */
 export type Reach = 'none' | 'others'
 
+// A checkpoint is replaced by a delete and inserts. Under READ COMMITTED a second replace's delete
+// misses the rows a first one commits meanwhile, and its inserts then collide on the key; the lock
+// makes replaces of one scope take turns.
+const checkpointClear = 'DELETE FROM nanocode_checkpoint WHERE scope = ?1'
+const checkpointLock =
+  "SELECT pg_advisory_xact_lock(hashtextextended('nanocode_checkpoint/' || $1::text, 0))"
+
 const logWrite = /^\s*(?:INSERT|UPDATE|DELETE)\b[^;]*\bnanocode_log\b/i
 
 type Link = { id: string; local: Set<() => void>; sql: postgres.Sql }
@@ -215,6 +222,7 @@ export function open(url: string, options: Options = {}): Host {
         if (access === 'schema') await tx.unsafe(schemaLock)
         const all: Contracts.SqlValue[][][] = []
         for (const [query, ...values] of statements) {
+          if (query === checkpointClear) await tx.unsafe(checkpointLock, [bind(values[0])] as never[])
           const rows = await tx
             .unsafe(text(query), values.map(bind) as never[], { prepare: true })
             .values()

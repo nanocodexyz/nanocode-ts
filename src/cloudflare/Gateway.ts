@@ -5,6 +5,7 @@ const requestHeaders: Record<Contracts.ModelProvider, RegExp> = {
   antigravity: /^(accept|content-type|x-goog-api-client|x-goog-user-project)$/,
   claude: /^(accept|content-type|anthropic-version|anthropic-beta|x-nanocode-hedge)$/,
   codex: /^(accept|content-type|x-session-affinity|x-nanocode-hedge)$/,
+  kimi: /^(accept|content-type)$/,
 }
 
 const responseHeader =
@@ -185,6 +186,9 @@ async function model(
   const headers: Record<string, string> = {}
   for (const [name, value] of dispatch.headers)
     if (allowed.test(name.toLowerCase())) headers[name.toLowerCase()] = value
+  // Workers AI keeps no files: a 404 tells the Kimi harness to send images inline from now on.
+  if (provider === 'kimi' && /\/files$/.test(dispatch.endpoint))
+    return modelError(provider, 404, 'not_found_error', 'AI Gateway has no Kimi file uploads')
   const body = await request.arrayBuffer()
   let query: Record<string, unknown>
   try {

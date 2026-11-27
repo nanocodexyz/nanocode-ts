@@ -28,6 +28,7 @@ impl WorkerTransport {
     pub const ANTIGRAVITY: Self = Self(Some("antigravity"));
     pub const CLAUDE: Self = Self(Some("claude"));
     pub const CODEX: Self = Self(Some("codex"));
+    pub const KIMI: Self = Self(Some("kimi"));
     pub const MCP: Self = Self(None);
 }
 

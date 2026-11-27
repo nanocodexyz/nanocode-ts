@@ -202,6 +202,12 @@ impl Sql for WorkerStore {
         self.run(SqlAccess::Write, operation, statements)
     }
 
+    // ponytail: unbounded, as before the SDK required a bound; the SqlHost is the embedder's (Durable
+    // Object SQLite, Postgres, ...), so a real bound belongs in its options once one is chosen.
+    fn call_bound(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     fn run<'a>(
         &'a self,
         access: SqlAccess,

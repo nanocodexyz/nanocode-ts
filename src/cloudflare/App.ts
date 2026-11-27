@@ -671,7 +671,7 @@ export function create<E extends Env>(options: create.Options<E>): create.Return
     options.subscription ??
     (plans &&
       ((account: string, env: E, provider: Contracts.ModelProvider) =>
-        provider === 'antigravity'
+        provider === 'antigravity' || provider === 'kimi'
           ? false
           : plans.subscription(account, env as E & Plans.Env, provider)))
   const served = (
