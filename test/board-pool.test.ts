@@ -433,5 +433,120 @@ if (process.env.NC_POOL_CHILD) {
       await alice.close()
       await bob.close()
     })
+
+    test('a pool on a lazy board that forwards only async methods renews, finishes and opens once', async () => {
+      const path = file()
+      const alice = await open(path, 'alice')
+      const methods = [
+        'cancel',
+        'charter',
+        'checkpoint',
+        'claim',
+        'close',
+        'finish',
+        'grant',
+        'group',
+        'heed',
+        'held',
+        'opened',
+        'post',
+        'ready',
+        'refresh',
+        'release',
+        'renew',
+        'reply',
+        'revoke',
+        'steer',
+        'steers',
+        'submit',
+        'task',
+        'tasks',
+        'work',
+      ] as const satisfies readonly (keyof Board.Board)[]
+      let opens = 0
+      let renewals = 0
+      let real: Promise<Opened> | undefined
+      const lazily = () =>
+        (real ??= (async () => {
+          opens++
+          return open(path, 'lazy')
+        })())
+      const calls = Object.fromEntries(
+        methods.map((name) => [
+          name,
+          async (...args: never[]) => {
+            if (name === 'renew') renewals++
+            const board = (await lazily()).board
+            return (board[name] as (...args: never[]) => unknown)(...args)
+          },
+        ]),
+      )
+      const lazy = { ...calls, actor: 'agent:lazy', scope } as never as Board.Board
+
+      const leaseMs = 90
+      const count = 4
+      for (let index = 0; index < count; index++)
+        ok(await alice.board.post({ id: 'p' + index, spec: 'renewed' }))
+      ok(await alice.board.post({ id: 'r', spec: 'reopened' }))
+
+      let started = false
+      const pools: Board.Pool[] = []
+      try {
+        const first = Board.pool(lazy, {
+          concurrency: count + 1,
+          leaseMs,
+          pollMs: 10,
+          async run(task, lease) {
+            if (task.id === 'r') {
+              started = true
+              await aborted(lease.signal)
+              return { done: 'too late' }
+            }
+            await sleep(leaseMs * 4)
+            return { done: 'first' }
+          },
+        })
+        pools.push(first)
+        await until('the first pool to finish its renewed tasks', async () => {
+          await alice.board.refresh()
+          const tasks = await alice.board.tasks()
+          return started && tasks.filter((task) => task.phase === 'done').length === count
+        })
+        await first.stop()
+        assert.equal(first.stats().released, 1, JSON.stringify(first.stats()))
+        assert.equal(await phase(alice.board, 'r'), 'open')
+
+        const second = Board.pool(lazy, {
+          concurrency: 1,
+          leaseMs,
+          pollMs: 10,
+          async run() {
+            await sleep(leaseMs * 4)
+            return { done: 'second' }
+          },
+        })
+        pools.push(second)
+        await until(
+          'the second pool to finish r',
+          async () => (await phase(alice.board, 'r')) === 'done',
+        )
+        await second.stop()
+
+        const [a, b] = pools.map((pool) => pool.stats())
+        assert.equal(a!.done + b!.done, count + 1, JSON.stringify({ a, b }))
+        assert.equal(a!.lost + b!.lost, 0, JSON.stringify({ a, b }))
+        assert.equal(a!.errors + b!.errors, 0, JSON.stringify({ a, b }))
+        assert.ok(renewals >= count * 2, String(renewals))
+        await alice.board.refresh()
+        assert.deepEqual(await alice.board.held(), [])
+        for (const task of await alice.board.tasks()) assert.equal(task.phase, 'done', task.id)
+        assert.deepEqual((await alice.board.task('r'))?.outcome, { done: 'second' })
+        assert.equal(opens, 1)
+      } finally {
+        await Promise.all(pools.map((pool) => pool.stop()))
+        await (await lazily()).close()
+        await alice.close()
+      }
+    })
   })
 }
