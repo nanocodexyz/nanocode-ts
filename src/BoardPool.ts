@@ -241,7 +241,7 @@ export function pool(board: Board.Board, options: PoolOptions): Pool {
         () => {
           worker.renewing = worker.renewing.then(() => renew(worker))
         },
-        Math.max(1, board.renewAfter(leaseMs)),
+        Math.max(1, Math.floor(leaseMs / 3)),
       ),
       renewing: Promise.resolve(),
       settled: Promise.resolve(),
