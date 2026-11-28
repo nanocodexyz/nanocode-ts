@@ -8,6 +8,7 @@ mod hand;
 mod mcp;
 mod remote;
 mod store;
+mod threads;
 mod tools;
 mod transport;
 mod workspace;
@@ -44,7 +45,7 @@ use nanocode::{
         Submitted, TurnInbox, TurnRecord, TurnState,
     },
     tool_contract::{Tool, ToolCollection},
-    turnlog::{Effects, OneLog, Policy, SqlLog},
+    turnlog::{Effects, OneLog, Policy},
 };
 use nanocode_code_mode::remote::PLACEMENT_INSTRUCTIONS;
 use serde::{Deserialize, Serialize};
@@ -869,7 +870,6 @@ thread_local! {
     static BLOB_THRESHOLD: Cell<Option<usize>> = const { Cell::new(None) };
     static RESTARTS: Cell<Option<u64>> = const { Cell::new(None) };
     static RETAIN_FINISHED: Cell<Option<usize>> = const { Cell::new(None) };
-    static VALUE_LIMIT: Cell<Option<usize>> = const { Cell::new(None) };
     static CHILD: Cell<bool> = const { Cell::new(false) };
     static HEDGING: RefCell<Option<(HedgePolicy, Arc<Hedging>)>> = const { RefCell::new(None) };
 }
@@ -1032,17 +1032,12 @@ async fn log(scope: &str) -> Result<Arc<Log>, String> {
     if let Some(log) = LOGS.with_borrow(|logs| logs.get(scope).cloned()) {
         return Ok(log);
     }
-    let opened = OneLog::open(
-        Arc::new(SqlLog::new(
-            Arc::new(store::WorkerStore::log()),
-            &store::log_migrated()
-                .await
-                .map_err(|error| error.to_string())?,
-        )),
+    let over = OneLog::over(
+        threads::threads().await.map_err(text)?,
         scope,
-        Policy {
+        &Policy {
             effects: Effects::default(),
-            max_row_bytes: VALUE_LIMIT.get(),
+            max_row_bytes: store::value_limit(),
             restarts: RESTARTS.get().unwrap_or(u64::MAX),
             retain_finished: RETAIN_FINISHED.get(),
             snapshot_ratio: 2,
@@ -1052,6 +1047,9 @@ async fn log(scope: &str) -> Result<Arc<Log>, String> {
     )
     .await
     .map_err(text)?;
+    let opened = over
+        .legacy()
+        .ok_or_else(|| format!("thread {scope} is not served by its old writer"))?;
     Ok(LOGS.with_borrow_mut(|logs| Arc::clone(logs.entry(scope.to_owned()).or_insert(opened))))
 }
 
@@ -2364,7 +2362,7 @@ fn execute(command: Command) -> Executed {
             BLOB_THRESHOLD.set(blob_threshold);
             RESTARTS.set(restarts);
             RETAIN_FINISHED.set(retain_finished);
-            VALUE_LIMIT.set(value_limit);
+            store::configure_value_limit(value_limit);
             Ok(Value::Null)
         }),
         Command::Init { config } => executed(init(config)),

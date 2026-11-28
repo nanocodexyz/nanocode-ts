@@ -1,4 +1,7 @@
-use std::{cell::RefCell, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    time::Duration,
+};
 
 #[cfg(feature = "agents")]
 use nanocode::claude::RootRegion;
@@ -25,6 +28,15 @@ impl WorkerStore {
 
 thread_local! {
     static MIGRATED: RefCell<Option<Migrated>> = const { RefCell::new(None) };
+    static VALUE_LIMIT: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+pub fn configure_value_limit(limit: Option<usize>) {
+    VALUE_LIMIT.set(limit);
+}
+
+pub fn value_limit() -> Option<usize> {
+    VALUE_LIMIT.get()
 }
 
 pub async fn log_migrated() -> Result<Migrated, StoreError> {
@@ -218,6 +230,10 @@ impl Sql for WorkerStore {
 
     fn call_bound(&self) -> Option<Duration> {
         None
+    }
+
+    fn row_bytes_max(&self) -> Option<u64> {
+        value_limit().map(|limit| limit as u64)
     }
 
     fn run<'a>(

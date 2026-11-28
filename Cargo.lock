@@ -433,6 +433,7 @@ dependencies = [
  "nanocode-platform",
  "nanocode-sync",
  "nanocode-sys",
+ "nanocode-tempo",
  "nanocode-tls",
  "nanocode-url",
  "serde",
@@ -1029,6 +1030,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "nanocode-tempo"
+version = "0.7.0"
+
+[[package]]
 name = "nanocode-tls"
 version = "0.7.0"
 dependencies = [
@@ -1137,6 +1142,7 @@ name = "nanocode-turnlog"
 version = "0.7.0"
 dependencies = [
  "nanocode-compression",
+ "nanocode-digest",
  "nanocode-durability-core",
  "nanocode-partitions",
  "nanocode-platform",

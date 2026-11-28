@@ -48,6 +48,12 @@ const graph: Board.NewTask[] = [
     terms: { retry: { maxAttempts: 2, backoffMs: 50 } },
   },
 ]
+await lead.board.setTextLimit(200, { key: 'text-limit' })
+log('lead', `limit  ${JSON.stringify(await lead.board.maxText())}`)
+const long = await lead.board.post({ id: 'long', spec: 'x'.repeat(201) })
+if (!long.ok && long.rejection.reason === 'Text')
+  log('lead', `post   long refused: ${long.rejection.chars} of ${long.rejection.max} chars`)
+
 for (const task of graph) {
   const posted = await lead.board.post(task, { key: 'post:' + task.id })
   log('lead', `post   ${task.id}${posted.ok ? '' : ' refused: ' + posted.rejection.kind}`)

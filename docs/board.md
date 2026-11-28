@@ -92,6 +92,25 @@ A finished task keeps the worker that finished it: `task.worker` on a `done` or 
 
 `steer(id, text)` sends a message to a task. The holder reads it with `steers(id, claim)`, which returns `{ seq, by, body, atMs, to }`, and acknowledges it with `heed(id, claim, seq)`, up to and including `seq`. While a steer is unheeded, `finish` is refused with `Steer`, so a message sent mid-run is never skipped.
 
+## Text limit
+
+A board keeps its text limit in its log, so every handle folds the same log to the same verdicts. A new board has no limit.
+
+```ts
+await board.setTextLimit(16_000) // needs manage on *; null removes the limit
+await board.maxText() // { by: 'board', chars: 16000 }
+```
+
+A limit applies to the writes after it in the log. A task spec, reply or steer with more characters than the limit is refused as a `TextRefusal`: `{ kind: 'Said' | 'Steer', reason: 'Text', chars, max }`. An empty steer is refused with `{ kind: 'Steer', value: 'Empty' }`.
+
+Every write must also fit in one row of its host. A write whose row is larger than the host's `value_limit` in bytes is not appended and is refused as a `RowRefusal`: `{ kind: 'Row', bytes, max }`. `maxText()` returns the bound that applies now:
+
+| Result | Bound |
+|--------|-------|
+| `{ by: 'board', chars }` | the board's limit, in characters |
+| `{ by: 'host', bytes }` | no board limit: the host's row bound, in bytes |
+| `{ by: 'none' }` | no board limit, and the host reports no `value_limit` |
+
 ## Reads
 
 `ready()`, `task(id)`, `tasks()` and `held()` read the local fold, the log as this handle has seen it. Your own writes show at once. Another process's show up only after `await board.refresh()`. `ready({ label: [key, value] })` filters by label.

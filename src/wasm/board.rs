@@ -5,8 +5,10 @@ use nanocode_board::{
     TaskId,
     access::{Identity, Verifier},
     checkpoint::{self as checkpoints, Fallback, Opened},
+    messages,
     shards::{self, Merged, Route},
-    steer::Steer,
+    steer::{self, Steer},
+    tasks,
 };
 use nanocode_partitions::Partition;
 use nanocode_turnlog::{LogHost, SqlLog};
@@ -58,6 +60,7 @@ pub(crate) enum Request {
     Refresh {
         board: u32,
     },
+    RenewsPerLease {},
     Steers {
         board: u32,
         #[serde(default)]
@@ -71,6 +74,9 @@ pub(crate) enum Request {
     },
     Tasks {
         at_ms: u64,
+        board: u32,
+    },
+    TextLimit {
         board: u32,
     },
     Write {
@@ -167,6 +173,7 @@ pub(crate) async fn execute(request: Request) -> Result<Value, String> {
             put(board, boards);
             refreshed
         }
+        Request::RenewsPerLease {} => Ok(json!(tasks::RENEWS_PER_LEASE)),
         Request::Steers { board, claim, task } => BOARDS.with_borrow(|boards| {
             let boards = boards
                 .get(&board)
@@ -204,6 +211,14 @@ pub(crate) async fn execute(request: Request) -> Result<Value, String> {
                 .into_values()
                 .map(|task| view(merged, task, at_ms))
                 .collect()
+        }),
+        Request::TextLimit { board } => BOARDS.with_borrow(|boards| {
+            let boards = boards
+                .get(&board)
+                .ok_or_else(|| unknown(board))?
+                .as_ref()
+                .ok_or_else(|| busy(board))?;
+            Ok(text_limit(boards))
         }),
         Request::Write { board, write } => {
             let mut boards = take(board)?;
@@ -287,6 +302,18 @@ async fn checkpoint(handle: u32, boards: &mut [Board], force: bool) -> Result<bo
         }
     });
     failed.map_or(Ok(any), Err)
+}
+
+fn text_limit(boards: &[Board]) -> Value {
+    let chars = boards
+        .iter()
+        .filter_map(|board| board.fold().text_limit())
+        .min();
+    match (chars, super::store::value_limit()) {
+        (Some(chars), _) => json!({ "by": "board", "chars": chars }),
+        (None, Some(bytes)) => json!({ "by": "host", "bytes": bytes }),
+        (None, None) => json!({ "by": "none" }),
+    }
 }
 
 fn opened(opened: &Opened) -> Value {
@@ -490,16 +517,26 @@ fn verdict(
             "ok": false,
             "rejection": rejected(&rejection),
         })),
+        Err(BoardError::Row { bytes, max }) => Ok(json!({
+            "ok": false,
+            "rejection": { "bytes": bytes, "kind": "Row", "max": max },
+        })),
         Err(error) => Err(error.to_string()),
     }
 }
 
 fn rejected(rejection: &Rejection) -> Value {
-    if let Rejection::Full {
-        cap: Cap::Label { max, key, value },
-    } = rejection
-    {
-        return json!({ "cap": { "label": [key, value], "max": max }, "kind": "Full" });
+    match rejection {
+        Rejection::Full {
+            cap: Cap::Label { max, key, value },
+        } => return json!({ "cap": { "label": [key, value], "max": max }, "kind": "Full" }),
+        Rejection::Said(messages::Refusal::Text { chars, max }) => {
+            return json!({ "chars": chars, "kind": "Said", "max": max, "reason": "Text" });
+        }
+        Rejection::Steer(steer::Refusal::Text { chars, max }) => {
+            return json!({ "chars": chars, "kind": "Steer", "max": max, "reason": "Text" });
+        }
+        _ => {}
     }
     match serde_json::to_value(rejection) {
         Ok(Value::String(kind)) => json!({ "kind": kind }),

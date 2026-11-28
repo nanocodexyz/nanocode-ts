@@ -41,10 +41,10 @@ export type RejectionKind =
   | 'Illegal'
   | 'Stale'
   | 'Full'
+  | 'Row'
   | 'Unknown'
 
-export type Rejection = {
-  kind: RejectionKind
+type Refusal = {
   claim?: string
   untilMs?: number
   cap?: Cap
@@ -53,6 +53,31 @@ export type Rejection = {
   fence?: { partition: number; epoch: number }
   value?: unknown
 }
+
+export type TextRefusal = Refusal & {
+  kind: 'Said' | 'Steer'
+  reason: 'Text'
+  chars: number
+  max: number
+}
+
+export type RowRefusal = Refusal & { kind: 'Row'; bytes: number; max: number }
+
+export type Rejection =
+  | TextRefusal
+  | RowRefusal
+  | (Refusal & {
+      kind: Exclude<RejectionKind, 'Row'>
+      reason?: undefined
+      chars?: undefined
+      max?: undefined
+      bytes?: undefined
+    })
+
+export type TextLimit =
+  | { by: 'board'; chars: number }
+  | { by: 'host'; bytes: number }
+  | { by: 'none' }
 
 export type Verdict =
   | { ok: true; event: string; found: boolean; seq: number; change: unknown }
@@ -202,12 +227,15 @@ export type Board = {
   tasks(atMs?: number): Promise<Task[]>
   held(atMs?: number): Promise<Task[]>
   refresh(): Promise<void>
+  renewAfter(leaseMs: number): number
   // How each partition opened; see Opened.
   opened(): Promise<Opened[]>
   // Saves each partition's fold as its scope's checkpoint, so the next open folds only the rows
   // after it. close() does this too. Resolves whether any partition saved one.
   checkpoint(): Promise<boolean>
   charter(atMs?: number): Promise<Verdict>
+  maxText(): Promise<TextLimit>
+  setTextLimit(chars: number | null, options?: { key?: string; atMs?: number }): Promise<Verdict>
   grant(grant: Grant, options?: { key?: string; atMs?: number }): Promise<Verdict>
   revoke(event: string, options?: { key?: string; atMs?: number }): Promise<Verdict>
   submit(op: RawOp, options?: { key?: string; by?: string; atMs?: number }): Promise<Verdict>
@@ -244,7 +272,8 @@ export async function open(options: Options): Promise<Board> {
         ...(options.retain === undefined ? {} : { retain: retention(options.retain) }),
       },
     })) as number
-    const opened = wrap(runtime, board, options, reach)
+    const renews = (await runtime.board({ renews_per_lease: {} })) as number
+    const opened = wrap(runtime, board, { options, reach, renews })
     if ((options.charter ?? true) && !options.actor.includes('+')) {
       const chartered = await opened.charter()
       if (!chartered.ok && chartered.rejection.kind !== 'Exists') {
@@ -338,9 +367,14 @@ export async function memorySql(): Promise<MemorySql> {
 function wrap(
   runtime: AgentRuntime.AgentRuntime,
   board: number,
-  options: Options,
-  reach: { current?: Contracts.SqlReach | undefined },
+  wiring: {
+    options: Options
+    reach: { current?: Contracts.SqlReach | undefined }
+    renews: number
+  },
 ): Board {
+  const options = wiring.options
+  const reach = wiring.reach
   const now = (atMs?: number) => atMs ?? Date.now()
   let queue: Promise<unknown> = Promise.resolve()
   const call = (request: object) => {
@@ -483,8 +517,20 @@ function wrap(
       await call({ refresh: { board } })
     },
 
+    renewAfter(leaseMs) {
+      return Math.floor(leaseMs / wiring.renews)
+    },
+
     charter(atMs) {
       return write({ op: 'charter' }, { atMs, key: 'charter' })
+    },
+
+    maxText() {
+      return call({ text_limit: { board } }) as Promise<TextLimit>
+    },
+
+    setTextLimit(chars, at) {
+      return write({ op: 'text_limit', chars }, at)
     },
 
     grant(grant, at) {
@@ -531,7 +577,7 @@ function wrap(
         () => {
           renewing = renewing.then(renew)
         },
-        Math.max(1, Math.floor(leaseMs / 3)),
+        Math.max(1, self.renewAfter(leaseMs)),
       )
       try {
         const steers = await self.steers(id, lease.claim)
